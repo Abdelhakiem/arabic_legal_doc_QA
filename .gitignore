@@ -1,0 +1,37 @@
+notebooks/.ipynb_checkpoints/
+# Python and uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Generated project artifacts; version data with DVC instead
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/indexes/
+reports/*.html
+reports/notebook_review/
+reports/experiments/
+reports/executed_*.ipynb
+data/experiments/
+data/model_cache/
+mlruns/
+*.db
+*.db-shm
+*.db-wal
+
+# OS/editor files
+.DS_Store
+.vscode/
+.codex/
+AGENT.md
+TODO.md
