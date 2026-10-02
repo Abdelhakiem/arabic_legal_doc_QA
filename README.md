@@ -4,6 +4,19 @@ A bilingual, retrieval-augmented Q&A service over the Egyptian Civil Code (Law 1
 
 This repository is in the foundation phase. The design and delivery checklist are maintained in [AGENT.md](AGENT.md) and [TODO.md](TODO.md); completed capabilities must be verified before this README describes them as available.
 
+## Foundation extraction status
+
+The PDF extraction and article validation code is in `src/arabic_legal_qa/corpus/extract.py`. Run it from the repository root after installing the notebook dependency group:
+
+```bash
+uv sync --group notebook
+uv run --group notebook python -m arabic_legal_qa.corpus.extract data/raw/egyptian_civil_law.pdf data/processed
+```
+
+The command writes `extraction_rows.json`, `article_candidates.json`, `extraction_report.json`, and `validation_status.json` under `data/processed/`. It writes canonical `articles.json` only when the complete corpus passes validation. The supplied PDF currently fails: page 147 has no Arabic text for Article 1022, and Arabic paragraphs under Article 1021 appear misaligned with the English article. The extractor returns exit code 2; the index and answer stages remain gated until a corrected source passes validation. `load_validated_articles()` also checks the PDF and corpus hashes before returning canonical records.
+
+The experimental pipeline is in `notebooks/basic_rag.ipynb`. It includes article inspection, local multilingual embeddings, a persistent Qdrant index, Gemini answer generation, and three MLflow configurations. Its model stages have not been run on this corpus because validation is incomplete. A Gemini API key and the notebook dependencies are needed when the source is corrected.
+
 ## Architecture
 
 ```text

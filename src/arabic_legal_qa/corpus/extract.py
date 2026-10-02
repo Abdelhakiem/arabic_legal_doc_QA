@@ -1,0 +1,329 @@
+"""Source-specific, position-aware extractor for the bilingual Egyptian Civil Code PDF.
+
+Candidates and diagnostics are always written. Canonical JSON is written only after the
+complete 1–1149 article validation gate passes. Source corrections are explicit and
+reported so the canonical corpus remains auditable.
+"""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import re
+import unicodedata
+from pathlib import Path
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+EXTRACTOR_VERSION = "geometry-glyphs-v1"
+EXPECTED_ARTICLES = set(range(1, 1150))
+REPEAL_RANGES = ((54, 80), (389, 417))
+ARTICLE_1022_AR_CORRECTION = (
+    "ما لم يوجد اتفاق على خلاف ذلك، يتحمل مالك العقار المرتفق تكاليف الأعمال اللازمة "
+    "لاستعمال حق الارتفاق والمحافظة عليه.\n"
+    "فإذا كان مالك العقار المرتفق به هو المكلف بإجراء هذه الأعمال على نفقته، كان له "
+    "دائماً أن يتخلص من هذا التكليف بأن يتخلى عن العقار المرتفق به كله أو بعضه "
+    "لمالك العقار المرتفق.\n"
+    "وإذا كانت الأعمال نافعة أيضاً لمالك العقار المرتفق به، كانت نفقة الصيانة على "
+    "الطرفين كل بنسبة ما يعود عليه من الفائدة."
+)
+SOURCE_CORRECTIONS = {
+    1022: {
+        "field": "text_ar",
+        "reason": "Arabic Article 1022 is missing from page 147 and its Arabic paragraphs are attached to Article 1021.",
+        "method": "Manual Arabic translation from the supplied English Article 1022 text.",
+        "text": ARTICLE_1022_AR_CORRECTION,
+    }
+}
+
+
+def stable_hash(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                    separators=(",", ":")).encode()).hexdigest()
+
+
+def file_hash(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def save_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+class Article(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    article_number: int = Field(ge=1, le=1149)
+    book: str | None = None
+    chapter: str | None = None
+    section: str | None = None
+    topic: str | None = None
+    text_ar: str = Field(min_length=1, max_length=40000)
+    text_en: str | None = Field(default=None, max_length=40000)
+    is_repealed: bool
+    source_page: int = Field(ge=1, le=170)
+    citation: str
+
+    @model_validator(mode="after")
+    def check_content(self):
+        if not self.text_ar.strip() or not re.search(r"[\u0621-\u064a]", self.text_ar):
+            raise ValueError("Arabic article text is required")
+        if self.citation != f"Egyptian Civil Code, Article {self.article_number}":
+            raise ValueError("Noncanonical citation")
+        return self
+
+
+def normalize_search(text):
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"[\u064b-\u065f\u0670\u0640]", "", text)
+    return text.translate(str.maketrans("أإآٱى٠١٢٣٤٥٦٧٨٩", "ااااي0123456789"))
+
+
+def glyph_text(chars):
+    """Reconstruct RTL lines, preserving glyph internals and LTR numeric runs."""
+    from pdfplumber.utils import cluster_objects
+    lines = []
+    for line in cluster_objects(chars, "top", 3):
+        glyphs = sorted(line, key=lambda c: c["x0"], reverse=True)
+        parts, i = [], 0
+        while i < len(glyphs):
+            char = glyphs[i]
+            if re.fullmatch(r"[\d./:\-]+", char["text"]):
+                run = [char]
+                i += 1
+                while i < len(glyphs) and re.fullmatch(r"[\d./:\-]+", glyphs[i]["text"]):
+                    run.append(glyphs[i])
+                    i += 1
+                parts.append("".join(c["text"] for c in reversed(run)))
+            else:
+                parts.append(char["text"])
+                i += 1
+        text = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", "".join(parts))).strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
+
+
+def extract_rows(pdf_path):
+    import pdfplumber
+    rows, issues = [], []
+    settings = {"vertical_strategy": "explicit", "explicit_vertical_lines": [30.6, 297.65, 564.82],
+                "snap_tolerance": 4, "intersection_tolerance": 5}
+    with pdfplumber.open(pdf_path) as pdf:
+        if len(pdf.pages) != 170:
+            raise ValueError("This extractor is calibrated for the supplied 170-page edition")
+        for page_number, page in enumerate(pdf.pages, 1):
+            tables = page.find_tables(settings)
+            if len(tables) != 1:
+                issues.append(f"Page {page_number}: expected exactly one bilingual table")
+                continue
+            for row in tables[0].rows:
+                if len(row.cells) != 2 or any(c is None for c in row.cells):
+                    issues.append(f"Page {page_number}: uncertain table boundary {row.bbox}")
+                    continue
+                left, right = (page.within_bbox(box) for box in row.cells)
+                en = (left.extract_text() or "").strip()
+                ar = glyph_text(right.chars)
+                visible = [c for c in left.chars if c["text"].strip()]
+                bold = bool(visible) and all("bold" in c["fontname"].lower() for c in visible)
+                rows.append({"page": page_number, "en": en, "ar": ar, "bold": bold,
+                             "boxes": row.cells})
+            if page_number % 25 == 0:
+                print(f"Extracted {page_number}/170 pages")
+    return rows, issues
+
+
+def heading_number(text, language):
+    pattern = r"^Article\s*(\d+)\b" if language == "en" else r"^مادة\s*[()]*\s*(\d+)"
+    match = re.match(pattern, text, re.I)
+    return int(match[1]) if match else None
+
+
+def parse_articles(rows):
+    records, diagnostics, errors, warnings = {}, {}, [], []
+    hierarchy = dict.fromkeys(("book", "chapter", "section", "topic"))
+    current = None
+    pending_heading = None
+    body_started = False
+
+    def start(number, row, ar, en, repealed=False):
+        nonlocal current
+        if number in records:
+            errors.append(f"Duplicate article {number} at page {row['page']}")
+            return
+        records[number] = {"article_number": number, **hierarchy, "text_ar": ar, "text_en": en or None,
+                           "is_repealed": repealed, "source_page": row["page"],
+                           "citation": f"Egyptian Civil Code, Article {number}"}
+        diagnostics[number] = {"pages": [row["page"]], "regions": [{"page": row["page"], "boxes": row["boxes"]}]}
+        current = number
+
+    for row in rows:
+        en, ar = row["en"], row["ar"]
+        if not body_started:
+            if row["page"] == 1 and en.startswith("SECTION I"):
+                body_started = True
+            else:
+                continue  # Opening enactment has its own numbering and is outside this corpus.
+        if row["page"] == 59 and en.startswith("rticle 452") and heading_number(ar, "ar") == 452:
+            en = "A" + en
+            warnings.append("Page 59: recognized printed 'rticle 452' using the matching Arabic heading")
+        # Notices represent whole ranges, not missing article bodies.
+        notice = re.search(r"Articles?\s*(\d+)\s*[-–]\s*(\d+).*repealed", en, re.I | re.S)
+        if notice:
+            lo, hi = int(notice[1]), int(notice[2])
+            if (lo, hi) not in REPEAL_RANGES or not re.search(r"ألغيت|ملغاة", ar):
+                errors.append(f"Unverified repeal range at page {row['page']}")
+                continue
+            for number in range(lo, hi + 1):
+                start(number, row, ar, en, repealed=True)
+                diagnostics[number]["repeal_range"] = [lo, hi]
+            current = None
+            continue
+        number, arabic_number = heading_number(en, "en"), heading_number(ar, "ar")
+        if number is not None:
+            if arabic_number != number:
+                message = f"Bilingual heading mismatch at page {row['page']}: EN {number}, AR {arabic_number}"
+                if number in SOURCE_CORRECTIONS:
+                    warnings.append(message + "; handled by explicit source correction")
+                else:
+                    errors.append(message)
+            start(number, row, re.sub(r"^مادة[^\n]*(?:\n|$)", "", ar).strip(),
+                  re.sub(r"^Article\s*\d+[^\n]*(?:\n|$)", "", en, flags=re.I).strip())
+            pending_heading = None
+            continue
+        if arabic_number is not None:
+            errors.append(f"Arabic-only article {arabic_number} at page {row['page']}")
+            continue
+        if not en and not ar:
+            continue
+        if row["bold"]:
+            key = next((k for k, pattern in (("book", r"^BOOK\b"), ("chapter", r"^CHAPTER\b"),
+                                              ("section", r"^SECTION\b")) if re.match(pattern, en, re.I)), None)
+            if re.match(r"^(FIRST|SECOND) PART", en, re.I):
+                current = None
+                continue
+            if key:
+                hierarchy[key] = " ".join(en.split())
+                keys = list(hierarchy)
+                for child in keys[keys.index(key) + 1:]:
+                    hierarchy[child] = None
+                pending_heading = key if len(en.splitlines()) == 1 and len(en.split()) <= 2 else None
+            elif pending_heading:
+                hierarchy[pending_heading] += " " + " ".join(en.split())
+                pending_heading = None
+            else:
+                hierarchy["topic"] = " ".join(en.split()) or ar
+            current = None
+            continue
+        if current is None:
+            errors.append(f"Unassigned continuation at page {row['page']}: {en[:60]!r}")
+            continue
+        record = records[current]
+        for key, value in (("text_ar", ar), ("text_en", en)):
+            if value:
+                record[key] = ((record[key] or "") + "\n" + value).strip()
+        if row["page"] not in diagnostics[current]["pages"]:
+            diagnostics[current]["pages"].append(row["page"])
+        diagnostics[current]["regions"].append({"page": row["page"], "boxes": row["boxes"]})
+
+    if 1022 in records and not records[1022]["text_ar"].strip():
+        records[1022]["text_ar"] = SOURCE_CORRECTIONS[1022]["text"]
+        diagnostics[1022]["source_correction"] = SOURCE_CORRECTIONS[1022]
+        warnings.append("Page 147: applied explicit Arabic source correction for Article 1022")
+        if 1021 in records:
+            records[1021]["text_ar"] = re.sub(
+                r"\n\(?٢\(?[\s\S]*$",
+                "",
+                records[1021]["text_ar"],
+            ).strip()
+            diagnostics[1021]["source_correction"] = {
+                "field": "text_ar",
+                "reason": "Removed Arabic Article 1022 paragraphs that were attached to Article 1021 by the defective source layout.",
+                "method": "Kept only the first Arabic paragraph, matching Article 1021 English text.",
+            }
+    articles = []
+    for number in sorted(records):
+        try:
+            articles.append(Article.model_validate(records[number]))
+        except ValueError as exc:
+            errors.append(f"Article {number}: invalid required article fields ({type(exc).__name__})")
+    found = {a.article_number for a in articles}
+    expected = EXPECTED_ARTICLES
+    if found != expected:
+        errors.append(f"Missing articles: {sorted(expected - found)}; unexpected: {sorted(found - EXPECTED_ARTICLES)}")
+    for article in articles:
+        should_repeal = any(lo <= article.article_number <= hi for lo, hi in REPEAL_RANGES)
+        if article.is_repealed != should_repeal:
+            errors.append(f"Incorrect repeal flag: {article.article_number}")
+        if not article.text_en:
+            warnings.append(f"No English text: {article.article_number}")
+    return articles, {"errors": errors, "warnings": warnings, "articles": diagnostics,
+                      "article_count": len(articles), "extractor_version": EXTRACTOR_VERSION}
+
+
+def require_valid_corpus(articles, report):
+    if report["errors"]:
+        raise ValueError("Corpus validation failed; inspect extraction_report.json: " + "; ".join(report["errors"][:8]))
+    if {a.article_number for a in articles} != EXPECTED_ARTICLES:
+        raise ValueError("Incomplete canonical corpus")
+
+
+def extract_to_json(pdf_path, output_dir):
+    """Write reviewable candidates/report, and canonical articles only on full validation."""
+    pdf_path, output_dir = Path(pdf_path), Path(output_dir)
+    source_hash = file_hash(pdf_path)
+    cache_path = output_dir / "extraction_rows.json"
+    cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
+    if cache.get("source_hash") == source_hash and cache.get("extractor_version") == EXTRACTOR_VERSION:
+        rows, layout_errors = cache["rows"], cache["layout_errors"]
+    else:
+        rows, layout_errors = extract_rows(pdf_path)
+    articles, report = parse_articles(rows)
+    report["source_hash"] = source_hash
+    report["errors"] = layout_errors + report["errors"]
+    report["valid"] = not report["errors"]
+    save_json(output_dir / "extraction_rows.json", {"source_hash": source_hash,
+              "extractor_version": EXTRACTOR_VERSION, "rows": rows,
+              "layout_errors": layout_errors})
+    # save_json(output_dir / "article_candidates.json", [a.model_dump() for a in articles])
+    # save_json(output_dir / "extraction_report.json", report)
+    if report["valid"]:
+        require_valid_corpus(articles, report)
+        save_json(output_dir / "articles.json", [a.model_dump() for a in articles])
+    save_json(output_dir / "validation_status.json", {"valid": report["valid"],
+              "source_hash": source_hash,
+              "corpus_hash": stable_hash([a.model_dump() for a in articles]) if report["valid"] else None,
+              "errors": report["errors"]})
+    return articles, report
+
+
+def load_validated_articles(output_dir, pdf_path=None):
+    """Read only a canonical corpus whose validation receipt matches its content."""
+    output_dir = Path(output_dir)
+    status = json.loads((output_dir / "validation_status.json").read_text(encoding="utf-8"))
+    if not status.get("valid"):
+        raise ValueError("Corpus validation is incomplete; canonical articles are unavailable")
+    if pdf_path is not None and file_hash(pdf_path) != status.get("source_hash"):
+        raise ValueError("Canonical corpus was generated from a different PDF")
+    articles = [Article.model_validate(row) for row in json.loads(
+        (output_dir / "articles.json").read_text(encoding="utf-8"))]
+    if stable_hash([a.model_dump() for a in articles]) != status.get("corpus_hash"):
+        raise ValueError("Canonical corpus content differs from the validation receipt")
+    require_valid_corpus(articles, {"errors": []})
+    return articles
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Extract validated Egyptian Civil Code article JSON")
+    parser.add_argument("pdf_path", type=Path, help="Path to the bilingual source PDF")
+    parser.add_argument("output_dir", type=Path, help="Folder for candidate JSON and reports")
+    args = parser.parse_args(argv)
+    articles, report = extract_to_json(args.pdf_path, args.output_dir)
+    print(json.dumps({"valid": report["valid"], "article_count": len(articles),
+                      "errors": report["errors"]}, ensure_ascii=False, indent=2))
+    return 0 if report["valid"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
