@@ -6,16 +6,18 @@ This repository is in the foundation phase. The design and delivery checklist ar
 
 ## Foundation extraction status
 
-The PDF extraction and article validation code is in `src/arabic_legal_qa/corpus/extract.py`. Run it from the repository root after installing the notebook dependency group:
+The PDF extraction and LangChain loader code is in `src/arabic_legal_qa/rag/pdf_loader.py`. Run it from the repository root after installing the project dependencies:
 
 ```bash
-uv sync --group notebook
-uv run --group notebook python -m arabic_legal_qa.corpus.extract data/raw/egyptian_civil_law.pdf data/processed
+uv sync --all-groups
+uv run python -m arabic_legal_qa.rag.pdf_loader data/raw/egyptian_civil_law.pdf data/processed
 ```
 
-The command writes `extraction_rows.json`, `article_candidates.json`, `extraction_report.json`, and `validation_status.json` under `data/processed/`. It writes canonical `articles.json` only when the complete corpus passes validation. The supplied PDF currently fails: page 147 has no Arabic text for Article 1022, and Arabic paragraphs under Article 1021 appear misaligned with the English article. The extractor returns exit code 2; the index and answer stages remain gated until a corrected source passes validation. `load_validated_articles()` also checks the PDF and corpus hashes before returning canonical records.
+The command writes `extraction_rows.json`, `article_candidates.json`, `extraction_report.json`, and `validation_status.json` under `data/processed/`. It writes canonical `articles.json` only when the complete corpus passes validation. The supplied PDF has a page 147 source defect around Article 1022; the loader applies an explicit Arabic correction, records that correction in `extraction_report.json`, and validates 1,149 articles. `load_validated_articles()` also checks the PDF and corpus hashes before returning canonical records.
 
-The experimental pipeline is in `notebooks/basic_rag.ipynb`. It includes article inspection, local multilingual embeddings, a persistent Qdrant index, Gemini answer generation, and three MLflow configurations. Its model stages have not been run on this corpus because validation is incomplete. A Gemini API key and the notebook dependencies are needed when the source is corrected.
+The active experimental pipeline is in `notebooks/basic_rag.ipynb`. It starts by loading one LangChain `Document` per validated article through `EgyptianCivilCodeLoader`; chunking, embeddings, vector storage, generation, and evaluation are implemented in later notebook sections.
+
+The default embedding model is `intfloat/multilingual-e5-small`: a lightweight multilingual model suitable for Arabic and English retrieval. It emits 384-dimensional vectors and accepts up to 512 tokens. The shared loader applies `passage: ` to indexed documents and `query: ` to user queries, as required by E5. Changing the embedding model or dimension requires rebuilding the Qdrant collection and its manifest.
 
 ## Architecture
 
@@ -89,8 +91,8 @@ The raw PDF is an input artifact, not a retrieval source. `data/processed/articl
 
 | Component | Input | Output | Invariant |
 | --- | --- | --- | --- |
-| `corpus.extract` | DVC-tracked PDF | parsed article candidates | uncertain splits are flagged, never silently indexed |
-| `corpus.validate` | article candidates | canonical article records | integer article number, Arabic text, source page, repeal flag, canonical citation |
+| `rag.pdf_loader` | DVC-tracked PDF | validated LangChain article documents | uncertain splits are flagged, corrections are reported, and invalid corpora are not indexed |
+| `rag.pdf_loader` | article candidates | canonical article records | integer article number, Arabic text, source page, repeal flag, canonical citation |
 | `rag.chunking` | canonical articles | article-aware chunks | all chunks retain article identity and legal metadata |
 | `rag.index` | deterministic chunks + model config | local, versioned index | index can be rebuilt from source artifacts |
 | `rag.retrieval` | question + index | ranked evidence | article metadata remains intact through filters and ranking |
@@ -105,8 +107,7 @@ src/arabic_legal_qa/
   api.py                 # FastAPI endpoints and dependency wiring
   config.py              # environment-based settings
   schemas.py             # HTTP schemas shared by the API
-  corpus/                # parse, normalize, validate, persist articles
-  rag/                   # chunk, embed, index, retrieve, generate, cite
+  rag/                   # load PDF, chunk, embed, index, retrieve, generate, cite
   evaluation/            # gold set, metrics, RAGAS, MLflow runners
   monitoring/            # traces, metrics, drift and retention controls
 scripts/                 # thin CLIs; no business logic

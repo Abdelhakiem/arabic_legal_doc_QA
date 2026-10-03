@@ -6,16 +6,17 @@ reported so the canonical corpus remains auditable.
 """
 from __future__ import annotations
 import argparse
-import hashlib
 import json
 import re
-import unicodedata
+import uuid
 from pathlib import Path
+from typing import Iterator, Literal
+from langchain_core.document_loaders import BaseLoader
+from langchain_core.documents import Document
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from arabic_legal_qa.rag.config import EXPECTED_ARTICLES, EXTRACTOR_VERSION, REPEAL_RANGES
+from arabic_legal_qa.rag.helper import file_hash, glyph_text, normalize_search, save_json, stable_hash
 
-EXTRACTOR_VERSION = "geometry-glyphs-v1"
-EXPECTED_ARTICLES = set(range(1, 1150))
-REPEAL_RANGES = ((54, 80), (389, 417))
 ARTICLE_1022_AR_CORRECTION = (
     "ما لم يوجد اتفاق على خلاف ذلك، يتحمل مالك العقار المرتفق تكاليف الأعمال اللازمة "
     "لاستعمال حق الارتفاق والمحافظة عليه.\n"
@@ -33,23 +34,6 @@ SOURCE_CORRECTIONS = {
         "text": ARTICLE_1022_AR_CORRECTION,
     }
 }
-
-
-def stable_hash(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
-                                    separators=(",", ":")).encode()).hexdigest()
-
-
-def file_hash(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def save_json(path, value):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
 
 
 class Article(BaseModel):
@@ -74,35 +58,7 @@ class Article(BaseModel):
         return self
 
 
-def normalize_search(text):
-    text = unicodedata.normalize("NFKC", text)
-    text = re.sub(r"[\u064b-\u065f\u0670\u0640]", "", text)
-    return text.translate(str.maketrans("أإآٱى٠١٢٣٤٥٦٧٨٩", "ااااي0123456789"))
-
-
-def glyph_text(chars):
-    """Reconstruct RTL lines, preserving glyph internals and LTR numeric runs."""
-    from pdfplumber.utils import cluster_objects
-    lines = []
-    for line in cluster_objects(chars, "top", 3):
-        glyphs = sorted(line, key=lambda c: c["x0"], reverse=True)
-        parts, i = [], 0
-        while i < len(glyphs):
-            char = glyphs[i]
-            if re.fullmatch(r"[\d./:\-]+", char["text"]):
-                run = [char]
-                i += 1
-                while i < len(glyphs) and re.fullmatch(r"[\d./:\-]+", glyphs[i]["text"]):
-                    run.append(glyphs[i])
-                    i += 1
-                parts.append("".join(c["text"] for c in reversed(run)))
-            else:
-                parts.append(char["text"])
-                i += 1
-        text = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", "".join(parts))).strip()
-        if text:
-            lines.append(text)
-    return "\n".join(lines)
+ArticleLanguage = Literal["ar", "en", "bilingual"]
 
 
 def extract_rows(pdf_path):
@@ -269,6 +225,100 @@ def require_valid_corpus(articles, report):
         raise ValueError("Incomplete canonical corpus")
 
 
+def article_content(article: Article, language: Literal["ar", "en"]):
+    """Return display text for a language-specific LangChain document."""
+    if language == "ar":
+        return article.text_ar
+    if not article.text_en:
+        raise ValueError(f"Article {article.article_number} has no English text")
+    return article.text_en
+
+
+def article_metadata(article: Article, report, source_name: str, language: Literal["ar", "en"],
+                     chunk_id: str, chunk_position: int = 0):
+    diagnostics = report.get("articles", {}).get(article.article_number, {})
+    metadata = article.model_dump(exclude={"text_ar", "text_en"})
+    metadata["book"] = metadata.get("book") or source_name
+    return {
+        **metadata,
+        "article_number": article.article_number,
+        "citation": article.citation,
+        "source_page": article.source_page,
+        "language": language,
+        "chunk_id": chunk_id,
+        "chunk_position": chunk_position,
+        "has_source_correction": "source_correction" in diagnostics,
+    }
+
+
+def article_to_document(article: Article, report, source_hash, corpus_hash,
+                        source_name: str, language: Literal["ar", "en"], chunk_position: int = 0):
+    content = article_content(article, language)
+    identity = stable_hash({
+        "corpus": corpus_hash,
+        "article": article.article_number,
+        "language": language,
+        "position": chunk_position,
+        "text": content,
+    })
+    chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+    return Document(
+        page_content=content,
+        metadata=article_metadata(article, report, source_name, language, chunk_id, chunk_position),
+    )
+
+
+def article_to_documents(article: Article, report, source_hash, corpus_hash,
+                         source_name: str, language: ArticleLanguage = "bilingual"):
+    languages = ("ar", "en") if language == "bilingual" else (language,)
+    for selected_language in languages:
+        if selected_language == "en" and not article.text_en:
+            continue
+        yield article_to_document(article, report, source_hash, corpus_hash, source_name, selected_language)
+
+
+class EgyptianCivilCodeLoader(BaseLoader):
+    """LangChain loader for validated Egyptian Civil Code article documents.
+
+    The loader still runs the repository extraction gate. It writes review artifacts,
+    validates the complete article set, and only yields LangChain `Document`s from a
+    valid canonical corpus.
+    """
+
+    def __init__(self, pdf_path, output_dir, language: ArticleLanguage = "bilingual"):
+        self.pdf_path = Path(pdf_path)
+        self.output_dir = Path(output_dir)
+        self.language = language
+        self.articles: list[Article] | None = None
+        self.report: dict | None = None
+        self.source_hash: str | None = None
+        self.corpus_hash: str | None = None
+
+    def load_articles(self):
+        articles, report = extract_to_json(self.pdf_path, self.output_dir)
+        require_valid_corpus(articles, report)
+        self.articles = articles
+        self.report = report
+        self.source_hash = report["source_hash"]
+        self.corpus_hash = stable_hash([article.model_dump() for article in articles])
+        return articles
+
+    def lazy_load(self) -> Iterator[Document]:
+        articles = self.load_articles()
+        assert self.report is not None
+        assert self.source_hash is not None
+        assert self.corpus_hash is not None
+        for article in articles:
+            yield from article_to_documents(
+                article,
+                self.report,
+                self.source_hash,
+                self.corpus_hash,
+                self.pdf_path.name,
+                self.language,
+            )
+
+
 def extract_to_json(pdf_path, output_dir):
     """Write reviewable candidates/report, and canonical articles only on full validation."""
     pdf_path, output_dir = Path(pdf_path), Path(output_dir)
@@ -286,8 +336,8 @@ def extract_to_json(pdf_path, output_dir):
     save_json(output_dir / "extraction_rows.json", {"source_hash": source_hash,
               "extractor_version": EXTRACTOR_VERSION, "rows": rows,
               "layout_errors": layout_errors})
-    # save_json(output_dir / "article_candidates.json", [a.model_dump() for a in articles])
-    # save_json(output_dir / "extraction_report.json", report)
+    save_json(output_dir / "article_candidates.json", [a.model_dump() for a in articles])
+    save_json(output_dir / "extraction_report.json", report)
     if report["valid"]:
         require_valid_corpus(articles, report)
         save_json(output_dir / "articles.json", [a.model_dump() for a in articles])
