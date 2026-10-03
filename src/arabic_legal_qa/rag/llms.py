@@ -24,6 +24,45 @@ class EmbeddingBundle:
     cache_dir: Path
 
 
+@dataclass(frozen=True)
+class LLMConfig:
+    """Provider-neutral chat model configuration."""
+
+    provider: str = "ollama"
+    model_name: str = "qwen2.5:7b"
+    base_url: str = "http://localhost:11434"
+    temperature: float = 0.0
+    num_ctx: int = 8192
+
+
+def load_llm(config: LLMConfig | None = None):
+    """Load a LangChain chat model through a provider-neutral interface."""
+
+    return _load_llm_cached(config or LLMConfig())
+
+
+@lru_cache(maxsize=8)
+def _load_llm_cached(config: LLMConfig):
+    provider = config.provider.lower()
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+
+        return ChatOllama(
+            model=config.model_name,
+            base_url=config.base_url,
+            temperature=config.temperature,
+            num_ctx=config.num_ctx,
+        )
+    if provider in {"google", "gemini", "google_genai"}:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        return ChatGoogleGenerativeAI(
+            model=config.model_name,
+            temperature=config.temperature,
+        )
+    raise ValueError(f"Unsupported chat model provider: {config.provider}")
+
+
 class PrefixedEmbeddings(Embeddings):
     """Add the prefixes expected by multilingual E5 for each task."""
 

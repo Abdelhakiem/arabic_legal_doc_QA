@@ -9,6 +9,7 @@ dependencies = [
     "huggingface-hub>=1,<2",
     "langchain-core>=1,<2",
     "langchain-huggingface>=1,<2",
+    "langchain-ollama>=1,<2",
     "pdfplumber>=0.11.10",
     "pydantic-settings>=2.15.0",
     "sentence-transformers>=5,<6",

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from arabic_legal_qa.rag import pdf_loader
 from arabic_legal_qa.rag import llms
-from arabic_legal_qa.rag import vec_db
+from arabic_legal_qa.rag import chunking as vec_db
 
 
 class CharacterTokenizer:
@@ -115,7 +115,14 @@ class NotebookBoundaryTests(unittest.TestCase):
         notebook = json.loads((ROOT / "notebooks/basic_rag.ipynb").read_text(encoding="utf-8"))
         cls.notebook = notebook
         cls.ns = {}
-        cls.load_cell_source = "".join(notebook["cells"][2]["source"])
+        load_sources = [
+            "".join(cell["source"])
+            for cell in notebook["cells"]
+            if cell["cell_type"] == "code"
+            and ("EgyptianCivilCodeLoader" in "".join(cell["source"])
+                 or "loader = EgyptianCivilCodeLoader" in "".join(cell["source"]))
+        ]
+        cls.load_cell_source = "\n".join(load_sources)
         exec(cls.load_cell_source, cls.ns)
 
     def test_notebook_loads_from_rag_loader(self):
