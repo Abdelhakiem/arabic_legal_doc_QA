@@ -30,6 +30,7 @@ notebook = [
     "pydantic>=2,<3",
     "langchain-qdrant>=1,<2",
     "qdrant-client>=1.15,<2",
+    "fastembed>=0.7,<1",
     "langchain-google-genai>=4,<5",
     "mlflow>=3,<4",
     "pandas>=2,<4",

@@ -47,7 +47,17 @@ def token_count(tokenizer: Any, text: str) -> int:
     backend = getattr(tokenizer, "backend_tokenizer", None)
     if backend is not None:
         return len(backend.encode(text, add_special_tokens=True).ids)
-    return len(tokenizer.encode(text, add_special_tokens=True, truncation=False))
+    # Slow-tokenizer fallback: temporarily enlarge the counting limit. This
+    # does not change the model's real limit; it only prevents a warning while
+    # measuring an unsplit source document.
+    previous_limit = getattr(tokenizer, "model_max_length", None)
+    if previous_limit is not None:
+        tokenizer.model_max_length = max(previous_limit, len(text) * 4 + 32)
+    try:
+        return len(tokenizer.encode(text, add_special_tokens=True, truncation=False))
+    finally:
+        if previous_limit is not None:
+            tokenizer.model_max_length = previous_limit
 
 
 def split_text(text: str, tokenizer: Any, limit: int) -> list[str]:
