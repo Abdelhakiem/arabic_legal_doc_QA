@@ -18,6 +18,7 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 data/indexes/
+data/vector_store/
 reports/*.html
 reports/notebook_review/
 reports/experiments/

@@ -6,7 +6,14 @@ description = "Grounded bilingual Q&A over the Egyptian Civil Code"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",
+    "huggingface-hub>=1,<2",
+    "langchain-core>=1,<2",
+    "langchain-huggingface>=1,<2",
+    "langchain-ollama>=1,<2",
+    "pdfplumber>=0.11.10",
     "pydantic-settings>=2.15.0",
+    "sentence-transformers>=5,<6",
+    "transformers>=5,<6",
     "uvicorn[standard]>=0.52.4",
 ]
 
@@ -16,16 +23,15 @@ arabic-legal-qa = "arabic_legal_qa:main"
 [dependency-groups]
 notebook = [
     "jupyterlab>=4,<5",
+    "ipywidgets>=8,<9",
     "ipykernel>=6,<8",
     "nbformat>=5,<6",
     "nbclient>=0.10,<1",
     "pdfplumber>=0.11,<0.12",
     "pydantic>=2,<3",
-    "langchain-core>=1,<2",
-    "langchain-huggingface>=1,<2",
-    "sentence-transformers>=5,<6",
     "langchain-qdrant>=1,<2",
     "qdrant-client>=1.15,<2",
+    "fastembed>=0.7,<1",
     "langchain-google-genai>=4,<5",
     "mlflow>=3,<4",
     "pandas>=2,<4",
