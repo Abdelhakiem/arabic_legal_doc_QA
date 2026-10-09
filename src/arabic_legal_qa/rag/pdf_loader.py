@@ -7,7 +7,9 @@ reported so the canonical corpus remains auditable.
 from __future__ import annotations
 import argparse
 import json
+import logging
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Iterator, Literal
@@ -16,6 +18,8 @@ from langchain_core.documents import Document
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from arabic_legal_qa.rag.config import EXPECTED_ARTICLES, EXTRACTOR_VERSION, REPEAL_RANGES
 from arabic_legal_qa.rag.helper import file_hash, glyph_text, normalize_search, save_json, stable_hash
+
+logger = logging.getLogger(__name__)
 
 ARTICLE_1022_AR_CORRECTION = (
     "ما لم يوجد اتفاق على خلاف ذلك، يتحمل مالك العقار المرتفق تكاليف الأعمال اللازمة "
@@ -86,7 +90,15 @@ def extract_rows(pdf_path):
                 rows.append({"page": page_number, "en": en, "ar": ar, "bold": bold,
                              "boxes": row.cells})
             if page_number % 25 == 0:
-                print(f"Extracted {page_number}/170 pages")
+                logger.debug(
+                    "PDF extraction progress",
+                    extra={
+                        "event": "rag.pdf.extraction.progress",
+                        "operation": "ingest",
+                        "stage": "pdf_extraction",
+                        "page_count": page_number,
+                    },
+                )
     return rows, issues
 
 
@@ -322,30 +334,66 @@ class EgyptianCivilCodeLoader(BaseLoader):
 def extract_to_json(pdf_path, output_dir):
     """Write reviewable candidates/report, and canonical articles only on full validation."""
     pdf_path, output_dir = Path(pdf_path), Path(output_dir)
-    source_hash = file_hash(pdf_path)
-    cache_path = output_dir / "extraction_rows.json"
-    cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
-    if cache.get("source_hash") == source_hash and cache.get("extractor_version") == EXTRACTOR_VERSION:
-        rows, layout_errors = cache["rows"], cache["layout_errors"]
-    else:
-        rows, layout_errors = extract_rows(pdf_path)
-    articles, report = parse_articles(rows)
-    report["source_hash"] = source_hash
-    report["errors"] = layout_errors + report["errors"]
-    report["valid"] = not report["errors"]
-    save_json(output_dir / "extraction_rows.json", {"source_hash": source_hash,
-              "extractor_version": EXTRACTOR_VERSION, "rows": rows,
-              "layout_errors": layout_errors})
-    save_json(output_dir / "article_candidates.json", [a.model_dump() for a in articles])
-    save_json(output_dir / "extraction_report.json", report)
-    if report["valid"]:
-        require_valid_corpus(articles, report)
-        save_json(output_dir / "articles.json", [a.model_dump() for a in articles])
-    save_json(output_dir / "validation_status.json", {"valid": report["valid"],
-              "source_hash": source_hash,
-              "corpus_hash": stable_hash([a.model_dump() for a in articles]) if report["valid"] else None,
-              "errors": report["errors"]})
-    return articles, report
+    started = time.perf_counter()
+    logger.info(
+        "PDF corpus extraction started",
+        extra={"event": "rag.pdf.extraction.started", "operation": "ingest", "stage": "pdf_extraction"},
+    )
+    try:
+        source_hash = file_hash(pdf_path)
+        cache_path = output_dir / "extraction_rows.json"
+        cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
+        cache_hit = (
+            cache.get("source_hash") == source_hash
+            and cache.get("extractor_version") == EXTRACTOR_VERSION
+        )
+        if cache_hit:
+            rows, layout_errors = cache["rows"], cache["layout_errors"]
+        else:
+            rows, layout_errors = extract_rows(pdf_path)
+        articles, report = parse_articles(rows)
+        report["source_hash"] = source_hash
+        report["errors"] = layout_errors + report["errors"]
+        report["valid"] = not report["errors"]
+        save_json(output_dir / "extraction_rows.json", {"source_hash": source_hash,
+                  "extractor_version": EXTRACTOR_VERSION, "rows": rows,
+                  "layout_errors": layout_errors})
+        save_json(output_dir / "article_candidates.json", [a.model_dump() for a in articles])
+        save_json(output_dir / "extraction_report.json", report)
+        if report["valid"]:
+            require_valid_corpus(articles, report)
+            save_json(output_dir / "articles.json", [a.model_dump() for a in articles])
+        save_json(output_dir / "validation_status.json", {"valid": report["valid"],
+                  "source_hash": source_hash,
+                  "corpus_hash": stable_hash([a.model_dump() for a in articles]) if report["valid"] else None,
+                  "errors": report["errors"]})
+        log_method = logger.info if report["valid"] else logger.error
+        log_method(
+            "PDF corpus extraction completed" if report["valid"] else "PDF corpus validation failed",
+            extra={
+                "event": "rag.pdf.extraction.completed" if report["valid"] else "rag.pdf.extraction.invalid",
+                "operation": "ingest",
+                "stage": "validation",
+                "corpus_version": stable_hash([a.model_dump() for a in articles]) if report["valid"] else None,
+                "article_count": len(articles),
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                "cache_hit": cache_hit,
+                "error_count": len(report["errors"]),
+                "warning_count": len(report["warnings"]),
+            },
+        )
+        return articles, report
+    except Exception:
+        logger.exception(
+            "PDF corpus extraction failed",
+            extra={
+                "event": "rag.pdf.extraction.failed",
+                "operation": "ingest",
+                "stage": "pdf_extraction",
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+        )
+        raise
 
 
 def load_validated_articles(output_dir, pdf_path=None):

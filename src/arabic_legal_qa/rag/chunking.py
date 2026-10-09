@@ -7,6 +7,8 @@ character, and keep article metadata attached to each LangChain document.
 from __future__ import annotations
 
 import re
+import logging
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
@@ -15,6 +17,8 @@ from langchain_core.documents import Document
 
 from arabic_legal_qa.rag.llms import EmbeddingBundle, EmbeddingConfig, load_embedding_bundle
 from arabic_legal_qa.rag.pdf_loader import Article, stable_hash
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -138,23 +142,59 @@ def chunk_documents(documents: Iterable[Document], tokenizer: Any, config: Chunk
                     corpus_hash: str) -> list[Document]:
     """Split LangChain documents while preserving article metadata."""
 
+    started = time.perf_counter()
     if config.overlap != 0:
         raise ValueError("This chunker supports zero overlap only")
 
     limit = _chunk_limit(config)
+    source_documents = list(documents)
+    logger.info(
+        "Article chunking started",
+        extra={
+            "event": "rag.chunking.started",
+            "operation": "ingest",
+            "stage": "chunking",
+            "document_count": len(source_documents),
+        },
+    )
     chunks: list[Document] = []
-    for document in documents:
-        metadata = dict(document.metadata)
-        article_number = metadata["article_number"]
-        language = metadata["language"]
-        for position, text in enumerate(split_text(document.page_content, tokenizer, limit)):
-            chunks.append(Document(page_content=text, metadata={
-                **metadata,
-                "chunk_id": _chunk_id(corpus_hash, article_number, language, position, text, limit),
-                "chunk_position": position,
-                "token_count": token_count(tokenizer, text),
-                "corpus_hash": corpus_hash,
-            }))
+    try:
+        for document in source_documents:
+            metadata = dict(document.metadata)
+            article_number = metadata["article_number"]
+            language = metadata["language"]
+            for position, text in enumerate(split_text(document.page_content, tokenizer, limit)):
+                chunks.append(Document(page_content=text, metadata={
+                    **metadata,
+                    "chunk_id": _chunk_id(corpus_hash, article_number, language, position, text, limit),
+                    "chunk_position": position,
+                    "token_count": token_count(tokenizer, text),
+                    "corpus_hash": corpus_hash,
+                }))
+    except Exception:
+        logger.exception(
+            "Article chunking failed",
+            extra={
+                "event": "rag.chunking.failed",
+                "operation": "ingest",
+                "stage": "chunking",
+                "document_count": len(source_documents),
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+        )
+        raise
+    logger.info(
+        "Article chunking completed",
+        extra={
+            "event": "rag.chunking.completed",
+            "operation": "ingest",
+            "stage": "chunking",
+            "document_count": len(source_documents),
+            "chunk_count": len(chunks),
+            "corpus_version": corpus_hash,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
     return chunks
 
 

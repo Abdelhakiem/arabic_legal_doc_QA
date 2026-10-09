@@ -308,6 +308,18 @@ class RAG:
 
             references = self._references(documents)
             language = _preferred_language(question)
+            logger.info(
+                "RAG retrieval completed",
+                extra={
+                    "event": "rag.retrieval.completed",
+                    "operation": "query",
+                    "stage": "retrieval",
+                    "query_count": len(queries),
+                    "retrieved_count": len(documents),
+                    "reference_count": len(references),
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                },
+            )
             if len(documents) < min_evidence:
                 answer = (
                     "لا توجد أدلة كافية في النص المسترجع للإجابة عن هذا السؤال."

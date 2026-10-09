@@ -8,10 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import lru_cache
+import logging
 from pathlib import Path
+import time
 
 from langchain_core.embeddings import Embeddings
 from arabic_legal_qa.rag.config import EmbeddingConfig, model_cache_dir, project_root
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,24 +47,44 @@ def load_llm(config: LLMConfig | None = None):
 
 @lru_cache(maxsize=8)
 def _load_llm_cached(config: LLMConfig):
+    started = time.perf_counter()
     provider = config.provider.lower()
+    logger.info(
+        "Chat model initialization started",
+        extra={
+            "event": "rag.llm.initialization.started",
+            "stage": "llm_initialization",
+            "model_name": config.model_name,
+        },
+    )
     if provider == "ollama":
         from langchain_ollama import ChatOllama
 
-        return ChatOllama(
+        model = ChatOllama(
             model=config.model_name,
             base_url=config.base_url,
             temperature=config.temperature,
             num_ctx=config.num_ctx,
         )
-    if provider in {"google", "gemini", "google_genai"}:
+    elif provider in {"google", "gemini", "google_genai"}:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatGoogleGenerativeAI(
+        model = ChatGoogleGenerativeAI(
             model=config.model_name,
             temperature=config.temperature,
         )
-    raise ValueError(f"Unsupported chat model provider: {config.provider}")
+    else:
+        raise ValueError(f"Unsupported chat model provider: {config.provider}")
+    logger.info(
+        "Chat model initialized",
+        extra={
+            "event": "rag.llm.initialization.completed",
+            "stage": "llm_initialization",
+            "model_name": config.model_name,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+    return model
 
 
 class PrefixedEmbeddings(Embeddings):
@@ -113,6 +137,15 @@ def _resolve_model_revision(model_name: str) -> str:
 
 @lru_cache(maxsize=4)
 def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> EmbeddingBundle:
+    started = time.perf_counter()
+    logger.info(
+        "Embedding model initialization started",
+        extra={
+            "event": "rag.embedding.initialization.started",
+            "stage": "embedding_initialization",
+            "model_name": config.model_name,
+        },
+    )
     from langchain_huggingface import HuggingFaceEmbeddings
     from transformers import AutoTokenizer
 
@@ -143,4 +176,14 @@ def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> E
         query_prefix=config.query_prefix,
         passage_prefix=config.passage_prefix,
     )
-    return EmbeddingBundle(embedder=embedder, tokenizer=tokenizer, config=config, cache_dir=cache_dir)
+    bundle = EmbeddingBundle(embedder=embedder, tokenizer=tokenizer, config=config, cache_dir=cache_dir)
+    logger.info(
+        "Embedding model initialized",
+        extra={
+            "event": "rag.embedding.initialization.completed",
+            "stage": "embedding_initialization",
+            "model_name": config.model_name,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+    return bundle

@@ -1,6 +1,8 @@
 """Embedded Qdrant indexing and native dense+sparse retrieval."""
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -8,6 +10,8 @@ from typing import Any, Iterable
 from langchain_core.documents import Document
 
 from arabic_legal_qa.rag.helper import save_json, stable_hash
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -74,8 +78,8 @@ def _manifest(documents: list[Document], embedding_bundle: Any,
     }
 
 
-def build_index(documents: Iterable[Document], embedding_bundle: Any,
-                config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
+def _build_index(documents: Iterable[Document], embedding_bundle: Any,
+                 config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
     """Replace the stable collection and upsert dense+sparse vectors."""
 
     from qdrant_client import QdrantClient, models
@@ -127,6 +131,56 @@ def build_index(documents: Iterable[Document], embedding_bundle: Any,
     manifest = {**_manifest(docs, embedding_bundle, config, corpus_hash), "complete": True}
     save_json(config.path / config.manifest_name, manifest)
     return {"client": client, "manifest": manifest, "count": count}
+
+
+def build_index(documents: Iterable[Document], embedding_bundle: Any,
+                config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
+    """Build the collection and emit a single lifecycle event per run."""
+
+    docs = list(documents)
+    started = time.perf_counter()
+    logger.info(
+        "Qdrant indexing started",
+        extra={
+            "event": "rag.index.started",
+            "operation": "ingest",
+            "stage": "vector_index",
+            "collection_name": config.collection_name,
+            "chunk_count": len(docs),
+            "vector_size": config.vector_size,
+            "model_name": embedding_bundle.config.model_name,
+            "corpus_version": corpus_hash,
+        },
+    )
+    try:
+        result = _build_index(docs, embedding_bundle, config, corpus_hash)
+    except Exception:
+        logger.exception(
+            "Qdrant indexing failed",
+            extra={
+                "event": "rag.index.failed",
+                "operation": "ingest",
+                "stage": "vector_index",
+                "collection_name": config.collection_name,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+        )
+        raise
+    logger.info(
+        "Qdrant indexing completed",
+        extra={
+            "event": "rag.index.completed",
+            "operation": "ingest",
+            "stage": "vector_index",
+            "collection_name": config.collection_name,
+            "chunk_count": result["count"],
+            "vector_size": config.vector_size,
+            "model_name": embedding_bundle.config.model_name,
+            "corpus_version": corpus_hash,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+    return result
 
 
 def open_index(config: QdrantConfig):
