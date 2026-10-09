@@ -58,6 +58,8 @@ def _manifest(documents: list[Document], embedding_bundle: Any,
     return {
         "schema": 1,
         "collection_name": config.collection_name,
+        "embedding_backend": "onnxruntime-cpu",
+        "onnx_model_filename": model_config.onnx_model_filename,
         "embedding_model": model_config.model_name,
         "embedding_revision": model_config.model_revision,
         "vector_size": config.vector_size,

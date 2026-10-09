@@ -42,6 +42,12 @@ def token_count(tokenizer: Any, text: str) -> int:
     backend = getattr(tokenizer, "backend_tokenizer", None)
     if backend is not None:
         return len(backend.encode(text, add_special_tokens=True).ids)
+    # The Rust `tokenizers.Tokenizer` returns an Encoding object directly,
+    # unlike Transformers tokenizers which return a list of IDs by default.
+    encoded = tokenizer.encode(text, add_special_tokens=True)
+    ids = getattr(encoded, "ids", encoded)
+    if isinstance(ids, (list, tuple)):
+        return len(ids)
     # Slow-tokenizer fallback: temporarily enlarge the counting limit. This
     # does not change the model's real limit; it only prevents a warning while
     # measuring an unsplit source document.

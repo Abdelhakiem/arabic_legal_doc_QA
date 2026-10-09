@@ -17,7 +17,7 @@ The command writes `extraction_rows.json`, `article_candidates.json`, `extractio
 
 The active experimental pipeline is in `notebooks/basic_rag.ipynb`. It starts by loading one LangChain `Document` per validated article through `EgyptianCivilCodeLoader`; chunking, embeddings, vector storage, generation, and evaluation are implemented in later notebook sections.
 
-The default embedding model is `intfloat/multilingual-e5-small`: a lightweight multilingual model suitable for Arabic and English retrieval. It emits 384-dimensional vectors and accepts up to 512 tokens. The shared loader applies `passage: ` to indexed documents and `query: ` to user queries, as required by E5. Changing the embedding model or dimension requires rebuilding the Qdrant collection and its manifest.
+The default embedding model is `intfloat/multilingual-e5-small`, executed with ONNX Runtime on CPU and the lightweight Rust `tokenizers` package. The loader downloads only the ONNX encoder, `tokenizer.json`, and model config—not PyTorch weights—and performs masked mean pooling plus L2 normalization to produce 384-dimensional vectors. It applies `passage: ` to indexed documents and `query: ` to user queries, as required by E5. Changing the embedding backend/model or dimension requires rebuilding the Qdrant collection and its manifest; indexes without the ONNX backend marker are automatically re-ingested.
 
 ## Installable RAG package
 
