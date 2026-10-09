@@ -16,7 +16,7 @@ from typing import Iterator, Literal
 from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from arabic_legal_qa.rag.config import EXPECTED_ARTICLES, EXTRACTOR_VERSION, REPEAL_RANGES
+from helpers.config import Settings, get_settings
 from arabic_legal_qa.rag.helper import file_hash, glyph_text, normalize_search, save_json, stable_hash
 
 logger = logging.getLogger(__name__)
@@ -42,15 +42,15 @@ SOURCE_CORRECTIONS = {
 
 class Article(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    article_number: int = Field(ge=1, le=1149)
+    article_number: int
     book: str | None = None
     chapter: str | None = None
     section: str | None = None
     topic: str | None = None
-    text_ar: str = Field(min_length=1, max_length=40000)
-    text_en: str | None = Field(default=None, max_length=40000)
+    text_ar: str = Field(min_length=1)
+    text_en: str | None = None
     is_repealed: bool
-    source_page: int = Field(ge=1, le=170)
+    source_page: int
     citation: str
 
     @model_validator(mode="after")
@@ -65,16 +65,24 @@ class Article(BaseModel):
 ArticleLanguage = Literal["ar", "en", "bilingual"]
 
 
-def extract_rows(pdf_path):
+def extract_rows(pdf_path, settings: Settings | None = None):
     import pdfplumber
+    settings = settings or get_settings()
     rows, issues = [], []
-    settings = {"vertical_strategy": "explicit", "explicit_vertical_lines": [30.6, 297.65, 564.82],
-                "snap_tolerance": 4, "intersection_tolerance": 5}
+    table_settings = {
+        "vertical_strategy": "explicit",
+        "explicit_vertical_lines": [settings.pdf_table_left_x, settings.pdf_table_middle_x,
+                                    settings.pdf_table_right_x],
+        "snap_tolerance": settings.pdf_table_snap_tolerance,
+        "intersection_tolerance": settings.pdf_table_intersection_tolerance,
+    }
     with pdfplumber.open(pdf_path) as pdf:
-        if len(pdf.pages) != 170:
-            raise ValueError("This extractor is calibrated for the supplied 170-page edition")
+        if len(pdf.pages) != settings.pdf_page_count:
+            raise ValueError(
+                f"This extractor is calibrated for the configured {settings.pdf_page_count}-page edition"
+            )
         for page_number, page in enumerate(pdf.pages, 1):
-            tables = page.find_tables(settings)
+            tables = page.find_tables(table_settings)
             if len(tables) != 1:
                 issues.append(f"Page {page_number}: expected exactly one bilingual table")
                 continue
@@ -89,7 +97,7 @@ def extract_rows(pdf_path):
                 bold = bool(visible) and all("bold" in c["fontname"].lower() for c in visible)
                 rows.append({"page": page_number, "en": en, "ar": ar, "bold": bold,
                              "boxes": row.cells})
-            if page_number % 25 == 0:
+            if page_number % settings.pdf_progress_interval_pages == 0:
                 logger.debug(
                     "PDF extraction progress",
                     extra={
@@ -108,7 +116,8 @@ def heading_number(text, language):
     return int(match[1]) if match else None
 
 
-def parse_articles(rows):
+def parse_articles(rows, settings: Settings | None = None):
+    settings = settings or get_settings()
     records, diagnostics, errors, warnings = {}, {}, [], []
     hierarchy = dict.fromkeys(("book", "chapter", "section", "topic"))
     current = None
@@ -133,14 +142,15 @@ def parse_articles(rows):
                 body_started = True
             else:
                 continue  # Opening enactment has its own numbering and is outside this corpus.
-        if row["page"] == 59 and en.startswith("rticle 452") and heading_number(ar, "ar") == 452:
+        if (row["page"] == settings.pdf_article_452_repair_page
+                and en.startswith("rticle 452") and heading_number(ar, "ar") == 452):
             en = "A" + en
             warnings.append("Page 59: recognized printed 'rticle 452' using the matching Arabic heading")
         # Notices represent whole ranges, not missing article bodies.
         notice = re.search(r"Articles?\s*(\d+)\s*[-–]\s*(\d+).*repealed", en, re.I | re.S)
         if notice:
             lo, hi = int(notice[1]), int(notice[2])
-            if (lo, hi) not in REPEAL_RANGES or not re.search(r"ألغيت|ملغاة", ar):
+            if (lo, hi) not in settings.repeal_ranges or not re.search(r"ألغيت|ملغاة", ar):
                 errors.append(f"Unverified repeal range at page {row['page']}")
                 continue
             for number in range(lo, hi + 1):
@@ -216,25 +226,64 @@ def parse_articles(rows):
             articles.append(Article.model_validate(records[number]))
         except ValueError as exc:
             errors.append(f"Article {number}: invalid required article fields ({type(exc).__name__})")
-    found = {a.article_number for a in articles}
-    expected = EXPECTED_ARTICLES
-    if found != expected:
-        errors.append(f"Missing articles: {sorted(expected - found)}; unexpected: {sorted(found - EXPECTED_ARTICLES)}")
+    errors.extend(validate_articles(articles, settings))
     for article in articles:
-        should_repeal = any(lo <= article.article_number <= hi for lo, hi in REPEAL_RANGES)
-        if article.is_repealed != should_repeal:
-            errors.append(f"Incorrect repeal flag: {article.article_number}")
         if not article.text_en:
             warnings.append(f"No English text: {article.article_number}")
     return articles, {"errors": errors, "warnings": warnings, "articles": diagnostics,
-                      "article_count": len(articles), "extractor_version": EXTRACTOR_VERSION}
+                      "article_count": len(articles), "extractor_version": settings.extractor_version}
 
 
-def require_valid_corpus(articles, report):
-    if report["errors"]:
-        raise ValueError("Corpus validation failed; inspect extraction_report.json: " + "; ".join(report["errors"][:8]))
-    if {a.article_number for a in articles} != EXPECTED_ARTICLES:
-        raise ValueError("Incomplete canonical corpus")
+def validate_articles(articles, settings: Settings | None = None) -> list[str]:
+    """Check article continuity, Arabic text, sane length, and repeal flags."""
+    settings = settings or get_settings()
+    errors: list[str] = []
+    article_numbers = [int(_record_value(article, "article_number")) for article in articles]
+    found = set(article_numbers)
+    expected = settings.expected_articles
+    if len(article_numbers) != len(found) or found != expected:
+        errors.append(
+            f"Article numbers are not contiguous: missing {sorted(expected - found)}; "
+            f"unexpected {sorted(found - expected)}; duplicates "
+            f"{sorted(number for number in found if article_numbers.count(number) > 1)}"
+        )
+
+    for article in articles:
+        number = int(_record_value(article, "article_number"))
+        if number not in expected:
+            errors.append(f"Article number {number} is outside the configured corpus range")
+        text_ar = _record_value(article, "text_ar")
+        if not isinstance(text_ar, str) or not text_ar.strip():
+            errors.append(f"Article {number} has empty Arabic text")
+        elif len(text_ar) > settings.article_text_max_length:
+            errors.append(
+                f"Article {number} Arabic text exceeds {settings.article_text_max_length} characters"
+            )
+        text_en = _record_value(article, "text_en")
+        if isinstance(text_en, str) and len(text_en) > settings.article_text_max_length:
+            errors.append(
+                f"Article {number} English text exceeds {settings.article_text_max_length} characters"
+            )
+        is_repealed = bool(_record_value(article, "is_repealed"))
+        should_be_repealed = any(lo <= number <= hi for lo, hi in settings.repeal_ranges)
+        if is_repealed != should_be_repealed:
+            expected_state = "repealed" if should_be_repealed else "active"
+            errors.append(f"Article {number} should be flagged as {expected_state}")
+        page = _record_value(article, "source_page")
+        if page is not None and not 1 <= int(page) <= settings.pdf_page_count:
+            errors.append(f"Article {number} source page is outside the configured PDF page range")
+    return errors
+
+
+def _record_value(article, field: str):
+    return article.get(field) if isinstance(article, dict) else getattr(article, field, None)
+
+
+def require_valid_corpus(articles, report, settings: Settings | None = None):
+    settings = settings or get_settings()
+    errors = report.get("errors", []) or validate_articles(articles, settings)
+    if errors:
+        raise ValueError("Corpus validation failed; inspect extraction_report.json: " + "; ".join(errors[:8]))
 
 
 def article_content(article: Article, language: Literal["ar", "en"]):
@@ -297,18 +346,20 @@ class EgyptianCivilCodeLoader(BaseLoader):
     valid canonical corpus.
     """
 
-    def __init__(self, pdf_path, output_dir, language: ArticleLanguage = "bilingual"):
+    def __init__(self, pdf_path, output_dir, language: ArticleLanguage = "bilingual",
+                 settings: Settings | None = None):
         self.pdf_path = Path(pdf_path)
         self.output_dir = Path(output_dir)
         self.language = language
+        self.settings = settings or get_settings()
         self.articles: list[Article] | None = None
         self.report: dict | None = None
         self.source_hash: str | None = None
         self.corpus_hash: str | None = None
 
     def load_articles(self):
-        articles, report = extract_to_json(self.pdf_path, self.output_dir)
-        require_valid_corpus(articles, report)
+        articles, report = extract_to_json(self.pdf_path, self.output_dir, self.settings)
+        require_valid_corpus(articles, report, self.settings)
         self.articles = articles
         self.report = report
         self.source_hash = report["source_hash"]
@@ -331,9 +382,10 @@ class EgyptianCivilCodeLoader(BaseLoader):
             )
 
 
-def extract_to_json(pdf_path, output_dir):
+def extract_to_json(pdf_path, output_dir, settings: Settings | None = None):
     """Write reviewable candidates/report, and canonical articles only on full validation."""
     pdf_path, output_dir = Path(pdf_path), Path(output_dir)
+    settings = settings or get_settings()
     started = time.perf_counter()
     logger.info(
         "PDF corpus extraction started",
@@ -341,29 +393,29 @@ def extract_to_json(pdf_path, output_dir):
     )
     try:
         source_hash = file_hash(pdf_path)
-        cache_path = output_dir / "extraction_rows.json"
+        cache_path = output_dir / settings.extraction_rows_filename
         cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
         cache_hit = (
             cache.get("source_hash") == source_hash
-            and cache.get("extractor_version") == EXTRACTOR_VERSION
+            and cache.get("extractor_version") == settings.extractor_version
         )
         if cache_hit:
             rows, layout_errors = cache["rows"], cache["layout_errors"]
         else:
-            rows, layout_errors = extract_rows(pdf_path)
-        articles, report = parse_articles(rows)
+            rows, layout_errors = extract_rows(pdf_path, settings)
+        articles, report = parse_articles(rows, settings)
         report["source_hash"] = source_hash
         report["errors"] = layout_errors + report["errors"]
         report["valid"] = not report["errors"]
-        save_json(output_dir / "extraction_rows.json", {"source_hash": source_hash,
-                  "extractor_version": EXTRACTOR_VERSION, "rows": rows,
+        save_json(output_dir / settings.extraction_rows_filename, {"source_hash": source_hash,
+                  "extractor_version": settings.extractor_version, "rows": rows,
                   "layout_errors": layout_errors})
-        save_json(output_dir / "article_candidates.json", [a.model_dump() for a in articles])
-        save_json(output_dir / "extraction_report.json", report)
+        save_json(output_dir / settings.article_candidates_filename, [a.model_dump() for a in articles])
+        save_json(output_dir / settings.extraction_report_filename, report)
         if report["valid"]:
-            require_valid_corpus(articles, report)
-            save_json(output_dir / "articles.json", [a.model_dump() for a in articles])
-        save_json(output_dir / "validation_status.json", {"valid": report["valid"],
+            require_valid_corpus(articles, report, settings)
+            save_json(output_dir / settings.canonical_articles_filename, [a.model_dump() for a in articles])
+        save_json(output_dir / settings.validation_status_filename, {"valid": report["valid"],
                   "source_hash": source_hash,
                   "corpus_hash": stable_hash([a.model_dump() for a in articles]) if report["valid"] else None,
                   "errors": report["errors"]})
@@ -396,19 +448,20 @@ def extract_to_json(pdf_path, output_dir):
         raise
 
 
-def load_validated_articles(output_dir, pdf_path=None):
+def load_validated_articles(output_dir, pdf_path=None, settings: Settings | None = None):
     """Read only a canonical corpus whose validation receipt matches its content."""
     output_dir = Path(output_dir)
-    status = json.loads((output_dir / "validation_status.json").read_text(encoding="utf-8"))
+    settings = settings or get_settings()
+    status = json.loads((output_dir / settings.validation_status_filename).read_text(encoding="utf-8"))
     if not status.get("valid"):
         raise ValueError("Corpus validation is incomplete; canonical articles are unavailable")
     if pdf_path is not None and file_hash(pdf_path) != status.get("source_hash"):
         raise ValueError("Canonical corpus was generated from a different PDF")
     articles = [Article.model_validate(row) for row in json.loads(
-        (output_dir / "articles.json").read_text(encoding="utf-8"))]
+        (output_dir / settings.canonical_articles_filename).read_text(encoding="utf-8"))]
     if stable_hash([a.model_dump() for a in articles]) != status.get("corpus_hash"):
         raise ValueError("Canonical corpus content differs from the validation receipt")
-    require_valid_corpus(articles, {"errors": []})
+    require_valid_corpus(articles, {"errors": []}, settings)
     return articles
 
 

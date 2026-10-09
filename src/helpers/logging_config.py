@@ -1,9 +1,8 @@
-"""Structured JSON logging for the Arabic Legal QA application.
+"""Shared JSON logging configuration for Arabic Legal QA.
 
-Configure once at an executable boundary (CLI/API startup). Pipeline modules
-should use ``logging.getLogger(__name__)`` and put safe structured metadata in
-``extra`` or :func:`log_context`; do not log raw questions, retrieved text,
-answers, prompts, or credentials.
+Configure logging once at an executable boundary (CLI/API startup). Pipeline
+modules should use ``logging.getLogger(__name__)`` and attach only safe
+metadata; do not log raw questions, retrieved text, answers, prompts, or secrets.
 """
 from __future__ import annotations
 
@@ -11,13 +10,12 @@ import contextvars
 import datetime as dt
 import json
 import logging
-import os
 import sys
 from contextlib import contextmanager
 from typing import Any, Iterator
 
+from helpers.config import get_settings
 
-_DEFAULT_LEVEL = "INFO"
 _CONTEXT_FIELDS = (
     "request_id",
     "trace_id",
@@ -26,6 +24,7 @@ _CONTEXT_FIELDS = (
     "corpus_version",
     "index_version",
     "model_name",
+    "provider",
     "duration_ms",
     "article_count",
     "document_count",
@@ -61,18 +60,14 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             "correlation_id": _log_context.get().get("request_id", "-"),
         }
-
-        # Context is applied first, then per-event fields can override it.
         for field in _CONTEXT_FIELDS:
             value = _log_context.get().get(field)
             if value is not None:
                 payload[field] = value
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
-
         if "request_id" in payload:
             payload["correlation_id"] = payload["request_id"]
-
         event = getattr(record, "event", None)
         if event is not None:
             payload["event"] = event
@@ -80,23 +75,17 @@ class JsonFormatter(logging.Formatter):
             payload["exception"] = self.formatException(record.exc_info)
         if record.stack_info:
             payload["stack"] = self.formatStack(record.stack_info)
-
         return json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
 @contextmanager
 def log_context(**fields: Any) -> Iterator[None]:
-    """Temporarily bind safe RAG/request fields to logs in this context.
-
-    Example: ``with log_context(request_id=rid, operation="query"): ...``
-    ContextVar keeps concurrent async requests isolated.
-    """
+    """Temporarily bind safe request/RAG fields to logs in this context."""
 
     unknown = set(fields) - set(_CONTEXT_FIELDS)
     if unknown:
         raise ValueError(f"Unsupported logging context fields: {sorted(unknown)}")
-    updated = {**_log_context.get(), **fields}
-    token = _log_context.set(updated)
+    token = _log_context.set({**_log_context.get(), **fields})
     try:
         yield
     finally:
@@ -106,14 +95,11 @@ def log_context(**fields: Any) -> Iterator[None]:
 def configure_logging(level: str | int | None = None) -> None:
     """Configure the root logger to emit JSON lines to stdout.
 
-    ``level`` overrides ``ARABIC_LEGAL_QA_LOG_LEVEL``. This function owns the
-    root handler configuration; call it once when starting the CLI or API.
-    Repeated calls replace the handler rather than duplicating log output.
+    ``level`` overrides the centralized ``LOG_LEVEL`` setting. Call this at
+    CLI/API startup; repeated calls replace rather than duplicate the root handler.
     """
 
-    configured_level = level if level is not None else os.getenv(
-        "ARABIC_LEGAL_QA_LOG_LEVEL", _DEFAULT_LEVEL
-    )
+    configured_level = level if level is not None else get_settings().log_level
     if isinstance(configured_level, str):
         resolved_level = logging.getLevelName(configured_level.upper())
         if not isinstance(resolved_level, int):

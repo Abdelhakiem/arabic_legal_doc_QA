@@ -7,31 +7,37 @@ contract, article-aware chunking, and local Qdrant hybrid index.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
 
-from arabic_legal_qa.rag.config import EmbeddingConfig, project_root
+from helpers.config import (
+    ChunkingConfig,
+    EmbeddingConfig,
+    LLMConfig,
+    QdrantConfig,
+    RAGConfig,
+    get_settings,
+    project_root,
+)
 from arabic_legal_qa.rag.helper import stable_hash
 from arabic_legal_qa.rag.llms import (
     EmbeddingBundle,
-    LLMConfig,
     load_embedding_bundle,
     load_llm,
+    resolve_llm_config,
 )
 from arabic_legal_qa.rag.pdf_loader import EgyptianCivilCodeLoader
 from arabic_legal_qa.rag.qdrant_db import (
-    QdrantConfig,
     build_index,
     hybrid_search,
     open_index,
 )
-from arabic_legal_qa.rag.chunking import ChunkingConfig, chunk_documents
+from arabic_legal_qa.rag.chunking import chunk_documents
 
 logger = logging.getLogger(__name__)
 
@@ -79,35 +85,13 @@ def _message_text(response: Any) -> str:
     return str(content).strip()
 
 
-@dataclass(frozen=True)
-class RAGConfig:
-    """Filesystem and model contract shared by ingestion and inference."""
-
-    root: Path
-    pdf_path: Path | None = None
-    processed_dir: Path | None = None
-    model_cache_dir: Path | None = None
-    qdrant_path: Path | None = None
-    collection_name: str = "egyptian_civil_code"
-    chunk_tokens: int = 480
-    exact_search: bool = True
-
-    def __post_init__(self) -> None:
-        root = Path(self.root).resolve()
-        object.__setattr__(self, "root", root)
-        object.__setattr__(self, "pdf_path", Path(self.pdf_path) if self.pdf_path else root / "data/raw/egyptian_civil_law.pdf")
-        object.__setattr__(self, "processed_dir", Path(self.processed_dir) if self.processed_dir else root / "data/processed")
-        object.__setattr__(self, "model_cache_dir", Path(self.model_cache_dir) if self.model_cache_dir else root / "data/model_cache")
-        object.__setattr__(self, "qdrant_path", Path(self.qdrant_path) if self.qdrant_path else root / "data/vector_store/qdrant")
-
-
 @dataclass
 class RAG:
     """Own ingestion state and provide retrieval from the persisted index."""
 
     config: RAGConfig
-    embedding_config: EmbeddingConfig = field(default_factory=EmbeddingConfig)
-    llm_config: LLMConfig = field(default_factory=LLMConfig)
+    embedding_config: EmbeddingConfig = field(default_factory=lambda: get_settings().embedding_config())
+    llm_config: LLMConfig = field(default_factory=lambda: get_settings().llm_config())
     embedding_bundle: EmbeddingBundle | None = field(default=None, init=False)
     llm: Any | None = field(default=None, init=False)
     qdrant_client: Any | None = field(default=None, init=False)
@@ -123,15 +107,12 @@ class RAG:
 
     def _qdrant_config(self) -> QdrantConfig:
         if self.qdrant_config is None:
-            self.qdrant_config = QdrantConfig(
-                path=self.config.qdrant_path,
-                collection_name=self.config.collection_name,
-                exact_search=self.config.exact_search,
-            )
+            self.qdrant_config = self.config.qdrant_config()
         return self.qdrant_config
 
     def _load_llm(self) -> Any:
         if self.llm is None:
+            self.llm_config = resolve_llm_config(self.llm_config)
             self.llm = load_llm(self.llm_config)
         return self.llm
 
@@ -154,9 +135,11 @@ class RAG:
             chunks = chunk_documents(
                 documents=documents,
                 tokenizer=bundle.tokenizer,
-                config=ChunkingConfig(
+                config=replace(
+                    get_settings().chunking_config(),
                     embedding_limit=bundle.config.embedding_limit,
                     chunk_tokens=self.config.chunk_tokens,
+                    overlap=self.config.chunk_overlap,
                 ),
                 corpus_hash=corpus_hash,
             )
@@ -205,7 +188,7 @@ class RAG:
     def _index_ready(self) -> bool:
         """Return whether a completed local index is available."""
 
-        manifest_path = self.config.qdrant_path / "manifest.json"
+        manifest_path = self.config.qdrant_path / self.config.qdrant_manifest_name
         if not manifest_path.exists():
             return False
         try:
@@ -238,11 +221,14 @@ class RAG:
             self.qdrant_client = open_index(self._qdrant_config())
         return self.qdrant_client
 
-    def retrieve(self, question: str, k: int = 5, prefetch_k: int = 24) -> list[Document]:
+    def retrieve(self, question: str, k: int | None = None,
+                 prefetch_k: int | None = None) -> list[Document]:
         """Run native dense+sparse hybrid retrieval for one question."""
 
         if not question.strip():
             raise ValueError("Question must not be empty")
+        k = self.config.retrieval_k if k is None else k
+        prefetch_k = self.config.prefetch_k if prefetch_k is None else prefetch_k
         return hybrid_search(
             query=question,
             embedding_bundle=self._load_embeddings(),
@@ -252,11 +238,13 @@ class RAG:
             prefetch_k=prefetch_k,
         )
 
-    def expand_query(self, question: str, max_queries: int = 3) -> list[str]:
+    def expand_query(self, question: str, max_queries: int | None = None) -> list[str]:
         """Generate same-language retrieval variants with the configured LLM."""
 
         if not question.strip():
             raise ValueError("Question must not be empty")
+        if max_queries is None:
+            max_queries = self.config.max_queries
         language = _preferred_language(question)
         response = self._load_llm().invoke(
             QUERY_EXPANSION_PROMPT.format(language=language, question=question)
@@ -287,9 +275,13 @@ class RAG:
             })
         return references
 
-    def query(self, question: str, k: int = 5, prefetch_k: int = 24,
-              max_queries: int = 3, min_evidence: int = 1) -> dict[str, Any]:
+    def query(self, question: str, k: int | None = None, prefetch_k: int | None = None,
+              max_queries: int | None = None, min_evidence: int | None = None) -> dict[str, Any]:
         """Expand, retrieve, and answer with grounded references."""
+        k = self.config.retrieval_k if k is None else k
+        prefetch_k = self.config.prefetch_k if prefetch_k is None else prefetch_k
+        max_queries = self.config.max_queries if max_queries is None else max_queries
+        min_evidence = self.config.min_evidence if min_evidence is None else min_evidence
         started = time.perf_counter()
         logger.info(
             "RAG query started",
@@ -394,7 +386,7 @@ class RAG:
 
 
 def create_rag(root: Path | str | None = None) -> RAG:
-    """Create a RAG instance using a data root and E5 revision."""
+    """Create a RAG instance from the centralized project settings."""
 
     if root is None:
         try:
@@ -403,16 +395,12 @@ def create_rag(root: Path | str | None = None) -> RAG:
             resolved_root = Path.cwd().resolve()
     else:
         resolved_root = Path(root).expanduser().resolve()
-    embedding_config = EmbeddingConfig(
-        model_name="intfloat/multilingual-e5-small",
-        model_revision=os.getenv("E5_SMALL_REVISION") or None,
+    settings = get_settings(resolved_root / ".env")
+    return RAG(
+        settings.rag_config(resolved_root),
+        settings.embedding_config(),
+        settings.llm_config(),
     )
-    llm_config = LLMConfig(
-        provider=os.getenv("LLM_PROVIDER", "ollama"),
-        model_name=os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
-        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-    )
-    return RAG(RAGConfig(root=resolved_root), embedding_config, llm_config)
 
 
 def ingest(root: Path | str | None = None) -> dict[str, Any]:

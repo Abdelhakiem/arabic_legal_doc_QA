@@ -10,24 +10,15 @@ import re
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
 from langchain_core.documents import Document
 
-from arabic_legal_qa.rag.llms import EmbeddingBundle, EmbeddingConfig, load_embedding_bundle
+from helpers.config import ChunkingConfig, EmbeddingConfig
+from arabic_legal_qa.rag.llms import EmbeddingBundle, load_embedding_bundle
 from arabic_legal_qa.rag.pdf_loader import Article, stable_hash
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ChunkingConfig:
-    """Token-budget configuration for article-aware chunking."""
-
-    embedding_limit: int = 512
-    chunk_tokens: int | None = None
-    overlap: int = 0
 
 
 def load_embedder(config: EmbeddingConfig | None = None, cache_dir: str | None = None) -> EmbeddingBundle:
