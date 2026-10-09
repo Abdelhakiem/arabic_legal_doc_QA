@@ -154,7 +154,7 @@ curl -fsS http://localhost:8000/health && curl -fsS http://localhost:8000/ask -H
 
 The Compose health check waits for the API and RAG resources to become ready. Keep `.env` private; do not commit credentials. This uses a local image build, so Docker Compose v2 and the artifact bundle above are prerequisites.
 
-For local development without Docker, install dependencies with `uv sync --all-groups`, then run the CLI or `uv run uvicorn api.app:app --host 0.0.0.0 --port 8000` from the repository root. The command-line entry point is `arabic-legal-qa`.
+For local development without Docker, install dependencies with `uv sync --all-groups`, then run the CLI or `uv run uvicorn api.app:app --host 0.0.0.0 --port 8000` from the repository root. The command-line entry point is `arabic-legal-qa`. If you want to use Ollama locally, install its optional adapter with `uv sync --all-groups --extra ollama` and configure `LLM_PROVIDER=ollama`.
 
 ## Quality gates
 

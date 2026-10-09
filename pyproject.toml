@@ -10,16 +10,19 @@ dependencies = [
     "langchain-core>=1,<2",
     "langchain-groq>=1,<2",
     "langchain-huggingface>=1,<2",
-    "langchain-ollama>=1,<2",
     "qdrant-client>=1.15,<2",
     "fastembed>=0.7,<1",
     "pdfplumber>=0.11.10",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1,<2",
     "sentence-transformers>=5,<6",
+    "torch>=2.6",
     "transformers>=5,<6",
     "uvicorn[standard]>=0.52.4",
 ]
+
+[project.optional-dependencies]
+ollama = ["langchain-ollama>=1,<2"]
 
 [project.scripts]
 arabic-legal-qa = "arabic_legal_qa.rag.cli:main"
@@ -48,6 +51,16 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = ["arabic_legal_qa", "api", "helpers"]
+
+# This service runs embeddings on CPU. Pin torch (a transitive dependency of
+# sentence-transformers) to CPU wheels instead of pulling CUDA runtime wheels.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
