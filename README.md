@@ -31,6 +31,18 @@ uv run arabic-legal-qa --root . query "ما هي آثار العقد؟"
 
 The package wheel includes the orchestrator and CLI. Runtime dependencies for Qdrant and FastEmbed are installed with the package, rather than only with notebook dependencies.
 
+## Installable RAG package
+
+The public Python API is exported from `arabic_legal_qa.rag`; the `RAG` class provides `ingest()`, `retrieve()`, and `query()`. The installed `arabic-legal-qa` command uses this RAG package as its entry point:
+
+```bash
+uv sync --all-groups
+uv run arabic-legal-qa --root . ingest
+uv run arabic-legal-qa --root . query "ما هي آثار العقد؟"
+```
+
+The package wheel includes the orchestrator and CLI. Runtime dependencies for Qdrant and FastEmbed are installed with the package, rather than only with notebook dependencies.
+
 ## Architecture
 
 ```text
