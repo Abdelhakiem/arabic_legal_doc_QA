@@ -149,7 +149,7 @@ dvc pull && dvc repro
 ```
 
 ```bash
-uv run uvicorn arabic_legal_qa.api:app --host 0.0.0.0 --port 8000
+uv run uvicorn api.app:app --host 0.0.0.0 --port 8000
 ```
 
 The current implementation status and evidence requirements are tracked in [TODO.md](TODO.md). Do not add credentials to Git; copy `.env.example` to `.env` only after that file is introduced.
