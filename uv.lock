@@ -172,12 +172,14 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "fastembed" },
     { name = "huggingface-hub" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "pdfplumber" },
     { name = "pydantic-settings" },
+    { name = "qdrant-client" },
     { name = "sentence-transformers" },
     { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
@@ -185,7 +187,6 @@ dependencies = [
 
 [package.dev-dependencies]
 notebook = [
-    { name = "fastembed" },
     { name = "ipykernel" },
     { name = "ipywidgets" },
     { name = "jupyterlab" },
@@ -198,18 +199,19 @@ notebook = [
     { name = "pdfplumber" },
     { name = "pydantic" },
     { name = "python-dotenv" },
-    { name = "qdrant-client" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
+    { name = "fastembed", specifier = ">=0.7,<1" },
     { name = "huggingface-hub", specifier = ">=1,<2" },
     { name = "langchain-core", specifier = ">=1,<2" },
     { name = "langchain-huggingface", specifier = ">=1,<2" },
     { name = "langchain-ollama", specifier = ">=1,<2" },
     { name = "pdfplumber", specifier = ">=0.11.10" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
+    { name = "qdrant-client", specifier = ">=1.15,<2" },
     { name = "sentence-transformers", specifier = ">=5,<6" },
     { name = "transformers", specifier = ">=5,<6" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
@@ -217,7 +219,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 notebook = [
-    { name = "fastembed", specifier = ">=0.7,<1" },
     { name = "ipykernel", specifier = ">=6,<8" },
     { name = "ipywidgets", specifier = ">=8,<9" },
     { name = "jupyterlab", specifier = ">=4,<5" },
@@ -230,7 +231,6 @@ notebook = [
     { name = "pdfplumber", specifier = ">=0.11,<0.12" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "python-dotenv", specifier = ">=1,<2" },
-    { name = "qdrant-client", specifier = ">=1.15,<2" },
 ]
 
 [[package]]

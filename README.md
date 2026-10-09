@@ -19,6 +19,18 @@ The active experimental pipeline is in `notebooks/basic_rag.ipynb`. It starts by
 
 The default embedding model is `intfloat/multilingual-e5-small`: a lightweight multilingual model suitable for Arabic and English retrieval. It emits 384-dimensional vectors and accepts up to 512 tokens. The shared loader applies `passage: ` to indexed documents and `query: ` to user queries, as required by E5. Changing the embedding model or dimension requires rebuilding the Qdrant collection and its manifest.
 
+## Installable RAG package
+
+The public Python API is exported from `arabic_legal_qa.rag`; the `RAG` class provides `ingest()`, `retrieve()`, and `query()`. The installed `arabic-legal-qa` command uses this RAG package as its entry point:
+
+```bash
+uv sync --all-groups
+uv run arabic-legal-qa --root . ingest
+uv run arabic-legal-qa --root . query "ما هي آثار العقد؟"
+```
+
+The package wheel includes the orchestrator and CLI. Runtime dependencies for Qdrant and FastEmbed are installed with the package, rather than only with notebook dependencies.
+
 ## Architecture
 
 ```text
