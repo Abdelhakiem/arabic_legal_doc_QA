@@ -36,6 +36,7 @@ from arabic_legal_qa.rag.qdrant_db import (
     build_index,
     hybrid_search,
     open_index,
+    prepare_retrieval,
 )
 from arabic_legal_qa.rag.chunking import chunk_documents
 
@@ -220,6 +221,36 @@ class RAG:
         if self.qdrant_client is None:
             self.qdrant_client = open_index(self._qdrant_config())
         return self.qdrant_client
+
+    def initialize(self) -> int:
+        """Prepare the index, embedding model, and chat model once for serving.
+
+        If the index is absent or incomplete, ``retrieval_client`` runs the
+        existing ingestion flow before startup is considered successful.
+        Model objects and the Qdrant client are retained on this RAG instance.
+        """
+
+        client = self.retrieval_client()
+        self._load_embeddings()
+        prepare_retrieval(self._qdrant_config())
+        self._load_llm()
+        indexed = client.count(self._qdrant_config().collection_name, exact=True).count
+        if indexed <= 0:
+            raise RuntimeError("The Qdrant collection is empty after initialization")
+        return indexed
+
+    def health(self) -> int:
+        """Check the initialized local index and return its document count."""
+
+        if self.qdrant_client is None:
+            raise RuntimeError("RAG initialization has not completed")
+        indexed = self.qdrant_client.count(
+            self._qdrant_config().collection_name,
+            exact=True,
+        ).count
+        if indexed <= 0:
+            raise RuntimeError("The Qdrant collection is empty")
+        return indexed
 
     def retrieve(self, question: str, k: int | None = None,
                  prefetch_k: int | None = None) -> list[Document]:

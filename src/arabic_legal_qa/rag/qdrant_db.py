@@ -29,6 +29,12 @@ def _sparse_encoder(model_name: str, cache_dir: Path | None = None):
     return _SPARSE_ENCODERS[key]
 
 
+def prepare_retrieval(config: QdrantConfig) -> None:
+    """Load the sparse encoder needed by hybrid search during service startup."""
+
+    _sparse_encoder(config.sparse_model, config.path / "sparse_cache")
+
+
 def _sparse_vector(encoded: Any):
     from qdrant_client import models
 

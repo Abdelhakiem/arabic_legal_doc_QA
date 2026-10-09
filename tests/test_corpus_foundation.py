@@ -1,67 +1,79 @@
-"""Focused unit tests for the corpus validation gate."""
+"""Acceptance checks against the canonical, processed Civil Code corpus."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from helpers.config import Settings
+from helpers.config import Settings, get_settings, project_root
 from arabic_legal_qa.rag.pdf_loader import validate_articles
 
 
-@pytest.fixture
-def settings() -> Settings:
-    return Settings(
-        _env_file=None,
-        expected_article_start=1,
-        expected_article_end=3,
-        repeal_ranges=((2, 2),),
-        article_text_max_length=20,
+@pytest.fixture(scope="module")
+def corpus() -> tuple[list[dict], Settings]:
+    settings = get_settings()
+    root = project_root()
+    processed_dir = settings.processed_dir.expanduser()
+    if not processed_dir.is_absolute():
+        processed_dir = root / processed_dir
+    articles_path = processed_dir / settings.canonical_articles_filename
+    if not articles_path.is_file():
+        pytest.fail(
+            f"Canonical corpus not found at {articles_path}; run corpus extraction first."
+        )
+    records = json.loads(articles_path.read_text(encoding="utf-8"))
+    assert isinstance(records, list), f"Expected a JSON list in {articles_path}"
+    return records, settings
+
+
+def test_article_numbers_are_contiguous(corpus: tuple[list[dict], Settings]) -> None:
+    records, settings = corpus
+    article_numbers = [record["article_number"] for record in records]
+    expected = list(range(settings.expected_article_start, settings.expected_article_end + 1))
+
+    assert len(article_numbers) == len(set(article_numbers)), "Duplicate article numbers found"
+    assert sorted(article_numbers) == expected, "Canonical article numbers have gaps or unexpected values"
+
+
+def test_every_record_has_nonempty_arabic_text(corpus: tuple[list[dict], Settings]) -> None:
+    records, _ = corpus
+    empty_articles = [
+        record.get("article_number")
+        for record in records
+        if not isinstance(record.get("text_ar"), str) or not record["text_ar"].strip()
+    ]
+
+    assert not empty_articles, f"Articles with empty Arabic text: {empty_articles}"
+
+
+def test_article_text_does_not_exceed_sane_length(corpus: tuple[list[dict], Settings]) -> None:
+    records, settings = corpus
+    oversized = [
+        (record.get("article_number"), field, len(record[field]))
+        for record in records
+        for field in ("text_ar", "text_en")
+        if isinstance(record.get(field), str)
+        and len(record[field]) > settings.article_text_max_length
+    ]
+
+    assert not oversized, (
+        f"Article text exceeds {settings.article_text_max_length} characters: {oversized}"
     )
 
 
-def valid_articles() -> list[dict]:
-    return [
-        {"article_number": 1, "text_ar": "نص المادة الأولى", "is_repealed": False},
-        {"article_number": 2, "text_ar": "نص المادة الثانية", "is_repealed": True},
-        {"article_number": 3, "text_ar": "نص المادة الثالثة", "is_repealed": False},
-    ]
+def test_repeal_ranges_are_flagged_and_corpus_passes_validator(
+    corpus: tuple[list[dict], Settings],
+) -> None:
+    records, settings = corpus
+    incorrect_flags = []
+    for record in records:
+        number = record["article_number"]
+        should_be_repealed = any(
+            start <= number <= end for start, end in settings.repeal_ranges
+        )
+        if record.get("is_repealed") is not should_be_repealed:
+            incorrect_flags.append(number)
 
-
-def test_article_numbers_are_contiguous(settings: Settings) -> None:
-    articles = valid_articles()
-    assert validate_articles(articles, settings) == []
-
-    articles.pop(1)
-    errors = validate_articles(articles, settings)
-    assert any("not contiguous" in error and "[2]" in error for error in errors)
-
-
-def test_every_article_has_nonempty_arabic_text(settings: Settings) -> None:
-    articles = valid_articles()
-    articles[0]["text_ar"] = "  \n"
-
-    errors = validate_articles(articles, settings)
-
-    assert "Article 1 has empty Arabic text" in errors
-
-
-@pytest.mark.parametrize("field", ["text_ar", "text_en"])
-def test_article_text_stays_within_sane_length(settings: Settings, field: str) -> None:
-    articles = valid_articles()
-    articles[0][field] = "ط" * (settings.article_text_max_length + 1)
-
-    errors = validate_articles(articles, settings)
-
-    language = "Arabic" if field == "text_ar" else "English"
-    assert any(f"Article 1 {language} text exceeds 20 characters" in error for error in errors)
-
-
-def test_repealed_articles_are_flagged(settings: Settings) -> None:
-    articles = valid_articles()
-    articles[1]["is_repealed"] = False
-    articles[2]["is_repealed"] = True
-
-    errors = validate_articles(articles, settings)
-
-    assert "Article 2 should be flagged as repealed" in errors
-    assert "Article 3 should be flagged as active" in errors
+    assert not incorrect_flags, f"Incorrect repeal flags: {incorrect_flags}"
+    assert validate_articles(records, settings) == []
