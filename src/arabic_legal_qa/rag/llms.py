@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 import time
 
+import numpy as np
 from langchain_core.embeddings import Embeddings
 from helpers.config import EmbeddingConfig, LLMConfig, get_settings, model_cache_dir
 
@@ -173,6 +174,78 @@ class PrefixedEmbeddings(Embeddings):
         return text if not prefix or text.startswith(prefix) else prefix + text
 
 
+class OnnxEmbeddings(Embeddings):
+    """Mean-pool token embeddings from an ONNX encoder on CPU.
+
+    The E5 model exports contextual token vectors, so this class applies the
+    same attention-mask-aware mean pooling and optional L2 normalization used
+    by the model's Sentence Transformers configuration.
+    """
+
+    def __init__(self, session: object, tokenizer: object, config: EmbeddingConfig):
+        self.session = session
+        self.tokenizer = tokenizer
+        self.config = config
+        self.pad_token_id = tokenizer.token_to_id("<pad>")
+        if self.pad_token_id is None:
+            raise ValueError("The embedding tokenizer does not define a <pad> token")
+        self.input_specs = {item.name: item.type for item in session.get_inputs()}
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text])[0]
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        vectors: list[list[float]] = []
+        for offset in range(0, len(texts), self.config.batch_size):
+            batch = texts[offset : offset + self.config.batch_size]
+            encodings = [self.tokenizer.encode(text, add_special_tokens=True).ids for text in batch]
+            if any(not ids for ids in encodings):
+                raise ValueError("Embedding input cannot tokenize to an empty sequence")
+            if any(len(ids) > self.config.embedding_limit for ids in encodings):
+                raise ValueError(
+                    f"Embedding input exceeds the configured {self.config.embedding_limit}-token limit"
+                )
+
+            width = max(map(len, encodings))
+            input_ids = np.full((len(batch), width), self.pad_token_id, dtype=np.int64)
+            attention_mask = np.zeros((len(batch), width), dtype=np.int64)
+            for row, ids in enumerate(encodings):
+                input_ids[row, : len(ids)] = ids
+                attention_mask[row, : len(ids)] = 1
+
+            feeds: dict[str, np.ndarray] = {}
+            for name, tensor_type in self.input_specs.items():
+                if name == "input_ids":
+                    value = input_ids
+                elif name == "attention_mask":
+                    value = attention_mask
+                elif name == "token_type_ids":
+                    value = np.zeros_like(input_ids)
+                else:
+                    raise ValueError(f"Unsupported required ONNX model input: {name}")
+                dtype = np.int32 if "int32" in tensor_type else np.int64
+                feeds[name] = value.astype(dtype, copy=False)
+
+            output = np.asarray(self.session.run(None, feeds)[0])
+            if output.ndim != 3 or output.shape[:2] != input_ids.shape:
+                raise ValueError(
+                    "Expected ONNX token embeddings shaped [batch, sequence, hidden], "
+                    f"received {output.shape}"
+                )
+            mask = attention_mask.astype(output.dtype)[..., None]
+            pooled = (output * mask).sum(axis=1) / np.maximum(mask.sum(axis=1), 1e-9)
+            if self.config.normalize_embeddings:
+                norms = np.linalg.norm(pooled, axis=1, keepdims=True)
+                pooled = pooled / np.maximum(norms, 1e-12)
+            vectors.extend(pooled.astype(np.float32).tolist())
+        return vectors
+
+
 def default_model_cache_dir(project_root: Path | None = None) -> Path:
     """Return the project-local model cache directory."""
 
@@ -182,10 +255,9 @@ def default_model_cache_dir(project_root: Path | None = None) -> Path:
 def load_embedding_bundle(config: EmbeddingConfig | None = None, cache_dir: Path | str | None = None) -> EmbeddingBundle:
     """Load or reuse the embedding model and tokenizer.
 
-    The first call downloads missing model files into `data/model_cache`.
-    Later calls with the same resolved config and cache directory reuse the
-    in-memory objects. If files already exist locally, Hugging Face loads them
-    from that cache.
+    The first call downloads the ONNX encoder and tokenizer into
+    `data/model_cache`; PyTorch and Transformers are not used. Later calls with
+    the same resolved config and cache directory reuse the in-memory objects.
     """
 
     selected = config or get_settings().embedding_config()
@@ -213,31 +285,40 @@ def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> E
             "model_name": config.model_name,
         },
     )
-    from langchain_huggingface import HuggingFaceEmbeddings
-    from transformers import AutoTokenizer
+    import onnxruntime as ort
+    from huggingface_hub import snapshot_download
+    from tokenizers import Tokenizer
 
-    base_embedder = HuggingFaceEmbeddings(
-        model_name=config.model_name,
-        model_kwargs={
-            "device": config.device,
-            "revision": config.model_revision,
-            "trust_remote_code": False,
-        },
-        encode_kwargs={
-            "normalize_embeddings": config.normalize_embeddings,
-            "batch_size": config.batch_size,
-        },
-        cache_folder=str(cache_dir),
-        show_progress=True,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(
-        config.model_name,
+    onnx_relative_path = Path(config.onnx_model_filename)
+    if onnx_relative_path.is_absolute() or ".." in onnx_relative_path.parts:
+        raise ValueError("ONNX model filename must be a relative path inside the model repository")
+    artifact_subdir = onnx_relative_path.parent
+    model_dir = Path(snapshot_download(
+        repo_id=config.model_name,
         revision=config.model_revision,
-        trust_remote_code=False,
         cache_dir=str(cache_dir),
-    )
-    if config.embedding_limit > tokenizer.model_max_length:
+        allow_patterns=[
+            config.onnx_model_filename,
+            (artifact_subdir / "tokenizer.json").as_posix(),
+            (artifact_subdir / "config.json").as_posix(),
+        ],
+    ))
+    model_path = model_dir / config.onnx_model_filename
+    tokenizer_path = model_dir / artifact_subdir / "tokenizer.json"
+    model_config_path = model_dir / artifact_subdir / "config.json"
+    for required_path in (model_path, tokenizer_path, model_config_path):
+        if not required_path.is_file():
+            raise FileNotFoundError(f"Required ONNX embedding artifact is missing: {required_path}")
+
+    import json
+
+    model_config = json.loads(model_config_path.read_text(encoding="utf-8"))
+    model_limit = model_config.get("max_position_embeddings")
+    if model_limit is not None and config.embedding_limit > model_limit:
         raise ValueError("Configured embedding limit exceeds the tokenizer's supported input length")
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+    base_embedder = OnnxEmbeddings(session=session, tokenizer=tokenizer, config=config)
     embedder = PrefixedEmbeddings(
         base=base_embedder,
         query_prefix=config.query_prefix,

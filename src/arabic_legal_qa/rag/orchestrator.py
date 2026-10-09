@@ -198,6 +198,11 @@ class RAG:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if manifest.get("complete") is not True:
                 return False
+            # A pre-ONNX index has vectors from a different inference path.
+            # Rebuild it once so the manifest always describes the active
+            # backend and the collection is internally consistent.
+            if manifest.get("embedding_backend") != "onnxruntime-cpu":
+                return False
             client = open_index(self._qdrant_config())
             count = client.count(self._qdrant_config().collection_name, exact=True).count
             if count != manifest.get("chunk_count"):

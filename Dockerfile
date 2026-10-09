@@ -10,23 +10,29 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:${PATH}"
 
+# Create the runtime user before copying files so ownership is assigned at
+# copy time rather than by recursively copying the large dependency tree.
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid appuser --create-home appuser \
+    && mkdir -p /app/data/model_cache \
+    && chown appuser:appuser /app/data/model_cache
+
 # Install runtime dependencies first so source edits do not invalidate this layer.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project
+RUN uv sync --locked --no-dev --no-install-project \
+    && uv cache clean
 
-COPY src/ ./src/
-COPY data/raw/ ./data/raw/
-COPY data/processed/ ./data/processed/
-COPY data/vector_store/qdrant/ ./data/vector_store/qdrant/
+COPY --chown=appuser:appuser src/ ./src/
+COPY --chown=appuser:appuser data/raw/ ./data/raw/
+COPY --chown=appuser:appuser data/processed/ ./data/processed/
+COPY --chown=appuser:appuser data/vector_store/qdrant/ ./data/vector_store/qdrant/
 
 RUN test -f data/raw/egyptian_civil_law.pdf \
     && test -f data/processed/articles.json \
-    && test -f data/vector_store/qdrant/manifest.json \
-    && useradd --create-home --uid 10001 appuser \
-    && mkdir -p data/model_cache \
-    && chown -R appuser:appuser /app
+    && test -f data/vector_store/qdrant/manifest.json
 
-RUN uv sync --locked --no-dev
+RUN uv sync --locked --no-dev \
+    && uv cache clean
 
 USER appuser
 EXPOSE 8000

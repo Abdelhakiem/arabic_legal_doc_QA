@@ -36,8 +36,8 @@ PDF_ARTICLE_452_REPAIR_PAGE = 59
 
 # Pipeline and model defaults.
 DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+DEFAULT_EMBEDDING_ONNX_FILENAME = "onnx/model.onnx"
 DEFAULT_EMBEDDING_LIMIT = 512
-DEFAULT_EMBEDDING_DEVICE = "cpu"
 DEFAULT_EMBEDDING_BATCH_SIZE = 4
 DEFAULT_EMBEDDING_NORMALIZE = True
 DEFAULT_E5_QUERY_PREFIX = "query: "
@@ -73,12 +73,12 @@ REPEAL_RANGES = DEFAULT_REPEAL_RANGES
 
 @dataclass(frozen=True)
 class EmbeddingConfig:
-    """Resolved embedding model contract shared by index and retrieval."""
+    """ONNX embedding model contract shared by index and retrieval."""
 
     model_name: str = DEFAULT_EMBEDDING_MODEL
     model_revision: str | None = None
+    onnx_model_filename: str = DEFAULT_EMBEDDING_ONNX_FILENAME
     embedding_limit: int = DEFAULT_EMBEDDING_LIMIT
-    device: str = DEFAULT_EMBEDDING_DEVICE
     batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE
     normalize_embeddings: bool = DEFAULT_EMBEDDING_NORMALIZE
     query_prefix: str = DEFAULT_E5_QUERY_PREFIX
@@ -218,8 +218,8 @@ class Settings(BaseSettings):
     embedding_revision: str | None = Field(
         default=None, validation_alias=AliasChoices("E5_SMALL_REVISION", "EMBEDDING_REVISION")
     )
+    embedding_onnx_filename: str = DEFAULT_EMBEDDING_ONNX_FILENAME
     embedding_limit: int = DEFAULT_EMBEDDING_LIMIT
-    embedding_device: str = DEFAULT_EMBEDDING_DEVICE
     embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE
     normalize_embeddings: bool = DEFAULT_EMBEDDING_NORMALIZE
     query_prefix: str = DEFAULT_E5_QUERY_PREFIX
@@ -260,8 +260,8 @@ class Settings(BaseSettings):
         return EmbeddingConfig(
             model_name=self.embedding_model,
             model_revision=self.embedding_revision,
+            onnx_model_filename=self.embedding_onnx_filename,
             embedding_limit=self.embedding_limit,
-            device=self.embedding_device,
             batch_size=self.embedding_batch_size,
             normalize_embeddings=self.normalize_embeddings,
             query_prefix=self.query_prefix,
