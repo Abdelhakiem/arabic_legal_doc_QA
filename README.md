@@ -2,7 +2,7 @@
 
 A bilingual, retrieval-augmented Q&A service over the Egyptian Civil Code (Law 131 of 1948). The service answers Arabic and English questions using only validated Civil Code articles, returns human-verifiable article citations, and abstains when the corpus does not provide sufficient support.
 
-This repository is in the foundation phase. The design and delivery checklist are maintained in [AGENT.md](AGENT.md) and [TODO.md](TODO.md); completed capabilities must be verified before this README describes them as available.
+The repository contains a validated corpus pipeline, a local hybrid Qdrant index, a reusable RAG orchestrator, and a FastAPI service. The design and remaining delivery checklist are maintained in [AGENT.md](AGENT.md) and [TODO.md](TODO.md).
 
 ## Foundation extraction status
 
@@ -19,10 +19,22 @@ The active experimental pipeline is in `notebooks/basic_rag.ipynb`. It starts by
 
 The default embedding model is `intfloat/multilingual-e5-small`: a lightweight multilingual model suitable for Arabic and English retrieval. It emits 384-dimensional vectors and accepts up to 512 tokens. The shared loader applies `passage: ` to indexed documents and `query: ` to user queries, as required by E5. Changing the embedding model or dimension requires rebuilding the Qdrant collection and its manifest.
 
+## Installable RAG package
+
+The public Python API is exported from `arabic_legal_qa.rag`; the `RAG` class provides `ingest()`, `retrieve()`, and `query()`. The installed `arabic-legal-qa` command uses this RAG package as its entry point:
+
+```bash
+uv sync --all-groups
+uv run arabic-legal-qa --root . ingest
+uv run arabic-legal-qa --root . query "ما هي آثار العقد؟"
+```
+
+The package wheel includes the orchestrator and CLI. Runtime dependencies for Qdrant and FastEmbed are installed with the package, rather than only with notebook dependencies.
+
 ## Architecture
 
 ```text
-                         Versioned, DVC-tracked inputs
+                              Source artifacts
                                       │
                                       ▼
                      Bilingual Egyptian Civil Code PDF
@@ -41,7 +53,7 @@ The default embedding model is `intfloat/multilingual-e5-small`: a lightweight m
               │            embeddings + persistent vector index
               │                       │
               ▼                       ▼
-      DVC provenance               retrieve (+ optional rerank)
+       corpus provenance           retrieve (+ optional rerank)
                                               │
                                               ▼
                               evidence sufficiency gate
@@ -55,7 +67,7 @@ The default embedding model is `intfloat/multilingual-e5-small`: a lightweight m
                          deterministic citation / repeal validation
                                                      │
                                                      ▼
-                         FastAPI `/ask` → answer, sources, grounded
+                               FastAPI `/ask`
                                                      │
                          ┌───────────────────────────┴───────────────────────────┐
                          ▼                                                       ▼
@@ -75,23 +87,22 @@ The raw PDF is an input artifact, not a retrieval source. `data/processed/articl
 5. Create and deduplicate citations from retrieved `article_number` metadata; disclose the repeal status of any cited article.
 6. Return an informational, source-bounded answer—not legal advice.
 
-`POST /ask` returns:
+`POST /ask` returns an answer and canonical article citations (not internal chunk IDs):
 
 ```json
 {
   "answer": "...",
-  "sources": ["Egyptian Civil Code, Article 147"],
-  "grounded": true
+  "sources": ["Egyptian Civil Code, Article 147"]
 }
 ```
 
-`GET /health` returns the application, corpus, and index state without requiring a model call.
+`GET /health` returns `{"status":"healthy","documents_indexed":N}` when ready. If startup or a health check fails, it returns HTTP 503 with an `errors` list. `/ask` rejects empty or whitespace-only questions with HTTP 422.
 
 ## Component contracts
 
 | Component | Input | Output | Invariant |
 | --- | --- | --- | --- |
-| `rag.pdf_loader` | DVC-tracked PDF | validated LangChain article documents | uncertain splits are flagged, corrections are reported, and invalid corpora are not indexed |
+| `rag.pdf_loader` | source PDF | validated LangChain article documents | uncertain splits are flagged, corrections are reported, and invalid corpora are not indexed |
 | `rag.pdf_loader` | article candidates | canonical article records | integer article number, Arabic text, source page, repeal flag, canonical citation |
 | `rag.chunking` | canonical articles | article-aware chunks | all chunks retain article identity and legal metadata |
 | `rag.index` | deterministic chunks + model config | local, versioned index | index can be rebuilt from source artifacts |
@@ -100,20 +111,17 @@ The raw PDF is an input artifact, not a retrieval source. `data/processed/articl
 | `rag.citations` | retrieved metadata | unique display citations | citations are deterministic and human-verifiable |
 | `api` | HTTP request | validated response | blanks are rejected; weak evidence abstains |
 
-## Planned repository layout
+## Relevant project layout
 
 ```text
-src/arabic_legal_qa/
-  api.py                 # FastAPI endpoints and dependency wiring
-  config.py              # environment-based settings
-  schemas.py             # HTTP schemas shared by the API
-  rag/                   # load PDF, chunk, embed, index, retrieve, generate, cite
-  evaluation/            # gold set, metrics, RAGAS, MLflow runners
-  monitoring/            # traces, metrics, drift and retention controls
-scripts/                 # thin CLIs; no business logic
-tests/                   # unit, integration, regression tests
-data/                    # DVC-managed raw, processed, index, evaluation data
-reports/                 # small, reproducible quality evidence
+src/
+  api/app.py              # FastAPI app and process lifecycle
+  api/schema.py           # HTTP request/response schemas
+  helpers/config.py       # centralized project settings
+  arabic_legal_qa/rag/    # ingestion, Qdrant, retrieval, LLM, citations
+Dockerfile                # single application image
+compose.yaml              # one `app` service; supporting services can be added later
+data/                     # local source, processed corpus, and Qdrant artifacts
 ```
 
 ## Key decisions
@@ -124,23 +132,29 @@ reports/                 # small, reproducible quality evidence
 - **Safety before fluency:** retrieval thresholds, source validation, and repeal disclosure execute before an answer is returned. Reranking, streaming, quantization, and high-throughput serving are later enhancements, not correctness mechanisms.
 - **Reproducibility:** pin and record corpus, extractor, chunking, model, prompt, and index versions with every experiment and request trace.
 
-## Intended reviewer workflow
+## Run with Docker Compose
 
-Once the corresponding foundation work is complete, a reviewer should need only these three commands:
+The deployment uses one Docker image and one Compose service named `app`. That image contains the FastAPI app, the RAG package, the validated articles, and the embedded local Qdrant index—there is no separate RAG or Qdrant service. Ollama is intentionally not included; Compose selects Groq, so set `GROQ_TOKEN` in `.env`. The Hugging Face embedding model is downloaded on first startup and persisted in a named volume, so first startup needs internet access and may take a few minutes.
+
+Before building, make sure the local artifact bundle exists: `data/raw/egyptian_civil_law.pdf`, `data/processed/articles.json`, and the complete `data/vector_store/qdrant/` directory including `manifest.json`. These generated/data files are git-ignored and are not currently fetched automatically by Compose; a fresh clone needs that bundle supplied separately. The image snapshots the corpus and index at build time, so rebuild the image after changing them.
+
+Set `GROQ_TOKEN` in `.env` after copying the example file. Then the three commands are:
 
 ```bash
-uv sync --all-groups
+cp -n .env.example .env
 ```
 
 ```bash
-dvc pull && dvc repro
+docker compose up --build -d --wait
 ```
 
 ```bash
-uv run uvicorn arabic_legal_qa.api:app --host 0.0.0.0 --port 8000
+curl -fsS http://localhost:8000/health && curl -fsS http://localhost:8000/ask -H 'Content-Type: application/json' -d '{"question":"ما آثار العقد؟"}'
 ```
 
-The current implementation status and evidence requirements are tracked in [TODO.md](TODO.md). Do not add credentials to Git; copy `.env.example` to `.env` only after that file is introduced.
+The Compose health check waits for the API and RAG resources to become ready. Keep `.env` private; do not commit credentials. This uses a local image build, so Docker Compose v2 and the artifact bundle above are prerequisites.
+
+For local development without Docker, install dependencies with `uv sync --all-groups`, then run the CLI or `uv run uvicorn api.app:app --host 0.0.0.0 --port 8000` from the repository root. The command-line entry point is `arabic-legal-qa`.
 
 ## Quality gates
 

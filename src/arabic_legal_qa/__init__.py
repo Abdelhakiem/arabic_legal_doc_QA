@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from arabic-legal-qa!")
+"""Arabic Legal QA installable application package."""

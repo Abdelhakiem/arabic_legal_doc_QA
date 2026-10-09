@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from arabic-legal-qa!")
+"""Shared helper utilities for the Arabic Legal QA project."""

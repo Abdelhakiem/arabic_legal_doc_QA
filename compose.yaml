@@ -1,0 +1,30 @@
+services:
+  app:
+    image: arabic-legal-qa:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      LLM_PROVIDER: groq
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - model-cache:/app/data/model_cache
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10m
+
+volumes:
+  model-cache:

@@ -1,24 +1,17 @@
 """Embedded Qdrant indexing and native dense+sparse retrieval."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
 from langchain_core.documents import Document
 
+from helpers.config import QdrantConfig, get_settings
 from arabic_legal_qa.rag.helper import save_json, stable_hash
 
-
-@dataclass(frozen=True)
-class QdrantConfig:
-    path: Path
-    collection_name: str = "egyptian_civil_code"
-    vector_size: int = 384
-    batch_size: int = 64
-    sparse_model: str = "Qdrant/bm25"
-    exact_search: bool = True
-    manifest_name: str = "manifest.json"
+logger = logging.getLogger(__name__)
 
 
 _SPARSE_ENCODERS: dict[tuple[str, str | None], Any] = {}
@@ -34,6 +27,12 @@ def _sparse_encoder(model_name: str, cache_dir: Path | None = None):
             cache_dir=str(cache_dir) if cache_dir else None,
         )
     return _SPARSE_ENCODERS[key]
+
+
+def prepare_retrieval(config: QdrantConfig) -> None:
+    """Load the sparse encoder needed by hybrid search during service startup."""
+
+    _sparse_encoder(config.sparse_model, config.path / "sparse_cache")
 
 
 def _sparse_vector(encoded: Any):
@@ -74,8 +73,8 @@ def _manifest(documents: list[Document], embedding_bundle: Any,
     }
 
 
-def build_index(documents: Iterable[Document], embedding_bundle: Any,
-                config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
+def _build_index(documents: Iterable[Document], embedding_bundle: Any,
+                 config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
     """Replace the stable collection and upsert dense+sparse vectors."""
 
     from qdrant_client import QdrantClient, models
@@ -129,6 +128,56 @@ def build_index(documents: Iterable[Document], embedding_bundle: Any,
     return {"client": client, "manifest": manifest, "count": count}
 
 
+def build_index(documents: Iterable[Document], embedding_bundle: Any,
+                config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
+    """Build the collection and emit a single lifecycle event per run."""
+
+    docs = list(documents)
+    started = time.perf_counter()
+    logger.info(
+        "Qdrant indexing started",
+        extra={
+            "event": "rag.index.started",
+            "operation": "ingest",
+            "stage": "vector_index",
+            "collection_name": config.collection_name,
+            "chunk_count": len(docs),
+            "vector_size": config.vector_size,
+            "model_name": embedding_bundle.config.model_name,
+            "corpus_version": corpus_hash,
+        },
+    )
+    try:
+        result = _build_index(docs, embedding_bundle, config, corpus_hash)
+    except Exception:
+        logger.exception(
+            "Qdrant indexing failed",
+            extra={
+                "event": "rag.index.failed",
+                "operation": "ingest",
+                "stage": "vector_index",
+                "collection_name": config.collection_name,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+        )
+        raise
+    logger.info(
+        "Qdrant indexing completed",
+        extra={
+            "event": "rag.index.completed",
+            "operation": "ingest",
+            "stage": "vector_index",
+            "collection_name": config.collection_name,
+            "chunk_count": result["count"],
+            "vector_size": config.vector_size,
+            "model_name": embedding_bundle.config.model_name,
+            "corpus_version": corpus_hash,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+    return result
+
+
 def open_index(config: QdrantConfig):
     from qdrant_client import QdrantClient
 
@@ -139,11 +188,16 @@ def open_index(config: QdrantConfig):
 
 
 def hybrid_search(query: str, embedding_bundle: Any, client: Any,
-                  config: QdrantConfig, k: int = 8, prefetch_k: int = 24,
+                  config: QdrantConfig, k: int | None = None,
+                  prefetch_k: int | None = None,
                   query_filter: Any = None) -> list[Document]:
     """Retrieve with Qdrant's native reciprocal-rank dense+sparse fusion."""
 
     from qdrant_client import models
+
+    settings = get_settings()
+    k = settings.retrieval_k if k is None else k
+    prefetch_k = settings.prefetch_k if prefetch_k is None else prefetch_k
 
     dense = embedding_bundle.embedder.embed_query(query)
     sparse = next(_sparse_encoder(config.sparse_model, config.path / "sparse_cache").embed([query]))

@@ -6,12 +6,17 @@ embedding bundle from here instead of constructing model objects themselves.
 """
 from __future__ import annotations
 
+import importlib.util
+import logging
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
+import time
 
 from langchain_core.embeddings import Embeddings
-from arabic_legal_qa.rag.config import EmbeddingConfig, model_cache_dir, project_root
+from helpers.config import EmbeddingConfig, LLMConfig, get_settings, model_cache_dir
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -24,43 +29,129 @@ class EmbeddingBundle:
     cache_dir: Path
 
 
-@dataclass(frozen=True)
-class LLMConfig:
-    """Provider-neutral chat model configuration."""
+def _adapter_available(module_name: str) -> bool:
+    """Return whether the optional LangChain provider adapter is importable."""
 
-    provider: str = "ollama"
-    model_name: str = "qwen2.5:7b"
-    base_url: str = "http://localhost:11434"
-    temperature: float = 0.0
-    num_ctx: int = 8192
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError):
+        # ``find_spec`` may raise for a test-injected module with no spec.
+        return module_name in __import__("sys").modules
+
+
+def resolve_llm_config(config: LLMConfig | None = None) -> LLMConfig:
+    """Choose Groq when configured, otherwise use local Ollama.
+
+    An explicit ``LLM_PROVIDER`` (or ``config.provider``) can pin a provider;
+    the default ``auto`` policy prefers Groq when a token and adapter exist.
+    This checks configuration and installed adapters, not remote API health.
+    """
+
+    selected = config or get_settings().llm_config()
+    provider = (selected.provider or "auto").strip().lower()
+    groq_token = selected.groq_token
+    groq_model = selected.model_name or selected.groq_model
+    ollama_model = selected.model_name or selected.ollama_model
+
+    if provider == "auto":
+        if groq_token and _adapter_available("langchain_groq"):
+            return replace(
+                selected,
+                provider="groq",
+                model_name=groq_model,
+                groq_token=groq_token,
+            )
+        if groq_token:
+            logger.warning(
+                "Groq credentials are configured but the LangChain Groq adapter is unavailable; trying Ollama",
+                extra={"event": "rag.llm.provider_fallback", "provider": "ollama"},
+            )
+        if _adapter_available("langchain_ollama"):
+            return replace(selected, provider="ollama", model_name=ollama_model)
+        raise RuntimeError(
+            "No LLM provider is available. Configure GROQ_TOKEN and install "
+            "langchain-groq, or install/configure langchain-ollama and an Ollama server."
+        )
+
+    if provider == "groq":
+        if not groq_token:
+            raise RuntimeError("Groq was selected but GROQ_TOKEN is not configured")
+        if not _adapter_available("langchain_groq"):
+            raise RuntimeError("Groq was selected but langchain-groq is not installed")
+        return replace(selected, provider="groq", model_name=groq_model, groq_token=groq_token)
+
+    if provider == "ollama":
+        if not _adapter_available("langchain_ollama"):
+            raise RuntimeError("Ollama was selected but langchain-ollama is not installed")
+        return replace(selected, provider="ollama", model_name=ollama_model)
+
+    if provider in {"google", "gemini", "google_genai"}:
+        return replace(
+            selected,
+            provider="google",
+            model_name=selected.model_name or selected.gemini_model,
+        )
+
+    raise ValueError(f"Unsupported LLM_PROVIDER {provider!r}; use auto, groq, or ollama")
 
 
 def load_llm(config: LLMConfig | None = None):
-    """Load a LangChain chat model through a provider-neutral interface."""
+    """Resolve and load a cached LangChain chat model."""
 
-    return _load_llm_cached(config or LLMConfig())
+    selected = config or get_settings().llm_config()
+    return _load_llm_cached(resolve_llm_config(selected))
 
 
 @lru_cache(maxsize=8)
 def _load_llm_cached(config: LLMConfig):
+    started = time.perf_counter()
     provider = config.provider.lower()
-    if provider == "ollama":
+    logger.info(
+        "Chat model initialization started",
+        extra={
+            "event": "rag.llm.initialization.started",
+            "stage": "llm_initialization",
+            "provider": provider,
+            "model_name": config.model_name,
+        },
+    )
+    if provider == "groq":
+        from langchain_groq import ChatGroq
+
+        model = ChatGroq(
+            model=config.model_name,
+            api_key=config.groq_token,
+            temperature=config.temperature,
+        )
+    elif provider == "ollama":
         from langchain_ollama import ChatOllama
 
-        return ChatOllama(
+        model = ChatOllama(
             model=config.model_name,
             base_url=config.base_url,
             temperature=config.temperature,
             num_ctx=config.num_ctx,
         )
-    if provider in {"google", "gemini", "google_genai"}:
+    elif provider in {"google", "gemini", "google_genai"}:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatGoogleGenerativeAI(
+        model = ChatGoogleGenerativeAI(
             model=config.model_name,
             temperature=config.temperature,
         )
-    raise ValueError(f"Unsupported chat model provider: {config.provider}")
+    else:
+        raise ValueError(f"Unsupported chat model provider: {config.provider}")
+    logger.info(
+        "Chat model initialized",
+        extra={
+            "event": "rag.llm.initialization.completed",
+            "stage": "llm_initialization",
+            "provider": provider,
+            "model_name": config.model_name,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+    return model
 
 
 class PrefixedEmbeddings(Embeddings):
@@ -97,7 +188,7 @@ def load_embedding_bundle(config: EmbeddingConfig | None = None, cache_dir: Path
     from that cache.
     """
 
-    selected = config or EmbeddingConfig()
+    selected = config or get_settings().embedding_config()
     selected_cache = Path(cache_dir) if cache_dir is not None else default_model_cache_dir()
     selected_cache.mkdir(parents=True, exist_ok=True)
     revision = selected.model_revision or _resolve_model_revision(selected.model_name)
@@ -113,6 +204,15 @@ def _resolve_model_revision(model_name: str) -> str:
 
 @lru_cache(maxsize=4)
 def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> EmbeddingBundle:
+    started = time.perf_counter()
+    logger.info(
+        "Embedding model initialization started",
+        extra={
+            "event": "rag.embedding.initialization.started",
+            "stage": "embedding_initialization",
+            "model_name": config.model_name,
+        },
+    )
     from langchain_huggingface import HuggingFaceEmbeddings
     from transformers import AutoTokenizer
 
@@ -143,4 +243,14 @@ def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> E
         query_prefix=config.query_prefix,
         passage_prefix=config.passage_prefix,
     )
-    return EmbeddingBundle(embedder=embedder, tokenizer=tokenizer, config=config, cache_dir=cache_dir)
+    bundle = EmbeddingBundle(embedder=embedder, tokenizer=tokenizer, config=config, cache_dir=cache_dir)
+    logger.info(
+        "Embedding model initialized",
+        extra={
+            "event": "rag.embedding.initialization.completed",
+            "stage": "embedding_initialization",
+            "model_name": config.model_name,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+    return bundle
