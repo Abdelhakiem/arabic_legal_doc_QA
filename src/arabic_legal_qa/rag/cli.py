@@ -23,7 +23,6 @@ def main() -> None:
     query_parser = commands.add_parser("query", help="Ask a question against the Civil Code")
     query_parser.add_argument("question", help="Question in Arabic or English")
     query_parser.add_argument("--k", type=int, default=None, help="Chunks retrieved per query")
-    query_parser.add_argument("--max-queries", type=int, default=None)
     args = parser.parse_args()
 
     configure_logging(get_settings().log_level)
@@ -32,7 +31,6 @@ def main() -> None:
         result = rag.ingest() if args.command == "ingest" else rag.query(
             args.question,
             k=args.k,
-            max_queries=args.max_queries,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     finally:

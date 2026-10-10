@@ -43,18 +43,6 @@ from arabic_legal_qa.rag.chunking import chunk_documents
 logger = logging.getLogger(__name__)
 
 
-QUERY_EXPANSION_PROMPT = """You expand a legal retrieval query for an Arabic/English civil-code corpus.
-The preferred user language is: {language}.
-Rewrite the question into up to three complementary search queries.
-Keep every query in the preferred user language. Preserve article numbers,
-legal terms, and named concepts. Return only one query per line, with no
-numbering, explanation, translation, or markdown.
-
-User question:
-{question}
-"""
-
-
 ANSWER_PROMPT = """You are a careful legal information assistant.
 Answer the user's question using only the retrieved Egyptian Civil Code evidence below.
 The preferred user language is: {language}. Write the answer in that language.
@@ -274,24 +262,6 @@ class RAG:
             prefetch_k=prefetch_k,
         )
 
-    def expand_query(self, question: str, max_queries: int | None = None) -> list[str]:
-        """Generate same-language retrieval variants with the configured LLM."""
-
-        if not question.strip():
-            raise ValueError("Question must not be empty")
-        if max_queries is None:
-            max_queries = self.config.max_queries
-        language = _preferred_language(question)
-        response = self._load_llm().invoke(
-            QUERY_EXPANSION_PROMPT.format(language=language, question=question)
-        )
-        queries: list[str] = []
-        for line in _message_text(response).splitlines():
-            cleaned = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
-            if cleaned and cleaned not in queries:
-                queries.append(cleaned)
-        return [question, *queries[:max_queries]]
-
     @staticmethod
     def _references(documents: list[Document]) -> list[dict[str, Any]]:
         references: list[dict[str, Any]] = []
@@ -312,11 +282,10 @@ class RAG:
         return references
 
     def query(self, question: str, k: int | None = None, prefetch_k: int | None = None,
-              max_queries: int | None = None, min_evidence: int | None = None) -> dict[str, Any]:
-        """Expand, retrieve, and answer with grounded references."""
+              min_evidence: int | None = None) -> dict[str, Any]:
+        """Retrieve using the user's question verbatim and answer with evidence."""
         k = self.config.retrieval_k if k is None else k
         prefetch_k = self.config.prefetch_k if prefetch_k is None else prefetch_k
-        max_queries = self.config.max_queries if max_queries is None else max_queries
         min_evidence = self.config.min_evidence if min_evidence is None else min_evidence
         started = time.perf_counter()
         logger.info(
@@ -324,16 +293,7 @@ class RAG:
             extra={"event": "rag.query.started", "operation": "query"},
         )
         try:
-            queries = self.expand_query(question, max_queries=max_queries)
-            documents: list[Document] = []
-            seen: set[str] = set()
-            for query in queries:
-                for document in self.retrieve(query, k=k, prefetch_k=prefetch_k):
-                    identity = str(document.metadata.get("chunk_id", document.page_content))
-                    if identity not in seen:
-                        seen.add(identity)
-                        documents.append(document)
-
+            documents = self.retrieve(question, k=k, prefetch_k=prefetch_k)
             references = self._references(documents)
             language = _preferred_language(question)
             logger.info(
@@ -342,7 +302,7 @@ class RAG:
                     "event": "rag.retrieval.completed",
                     "operation": "query",
                     "stage": "retrieval",
-                    "query_count": len(queries),
+                    "query_count": 1,
                     "retrieved_count": len(documents),
                     "reference_count": len(references),
                     "duration_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -360,13 +320,13 @@ class RAG:
                         "event": "rag.query.abstained",
                         "operation": "query",
                         "stage": "retrieval",
-                        "query_count": len(queries),
+                        "query_count": 1,
                         "retrieved_count": len(documents),
                         "reference_count": len(references),
                         "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                     },
                 )
-                return {"answer": answer, "references": references, "queries": queries}
+                return {"answer": answer, "references": references, "evidence_count": 0}
 
             context_parts = []
             for index, document in enumerate(documents, start=1):
@@ -386,7 +346,6 @@ class RAG:
             result = {
                 "answer": _message_text(response),
                 "references": references,
-                "queries": queries,
                 "evidence_count": len(documents),
             }
             logger.info(
@@ -396,7 +355,7 @@ class RAG:
                     "operation": "query",
                     "stage": "generation",
                     "model_name": self.llm_config.model_name,
-                    "query_count": len(queries),
+                    "query_count": 1,
                     "retrieved_count": len(documents),
                     "reference_count": len(references),
                     "duration_ms": round((time.perf_counter() - started) * 1000, 2),

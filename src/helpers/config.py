@@ -59,7 +59,6 @@ DEFAULT_QDRANT_EXACT_SEARCH = True
 DEFAULT_QDRANT_MANIFEST = "manifest.json"
 DEFAULT_RETRIEVAL_K = 5
 DEFAULT_PREFETCH_K = 24
-DEFAULT_MAX_QUERIES = 3
 DEFAULT_MIN_EVIDENCE = 1
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8000
@@ -141,7 +140,6 @@ class RAGConfig:
     qdrant_manifest_name: str = DEFAULT_QDRANT_MANIFEST
     retrieval_k: int = DEFAULT_RETRIEVAL_K
     prefetch_k: int = DEFAULT_PREFETCH_K
-    max_queries: int = DEFAULT_MAX_QUERIES
     min_evidence: int = DEFAULT_MIN_EVIDENCE
 
     def __post_init__(self) -> None:
@@ -248,7 +246,6 @@ class Settings(BaseSettings):
     qdrant_manifest_name: str = DEFAULT_QDRANT_MANIFEST
     retrieval_k: int = DEFAULT_RETRIEVAL_K
     prefetch_k: int = DEFAULT_PREFETCH_K
-    max_queries: int = DEFAULT_MAX_QUERIES
     min_evidence: int = DEFAULT_MIN_EVIDENCE
 
     # Serving and logs.
@@ -321,7 +318,6 @@ class Settings(BaseSettings):
             qdrant_manifest_name=self.qdrant_manifest_name,
             retrieval_k=self.retrieval_k,
             prefetch_k=self.prefetch_k,
-            max_queries=self.max_queries,
             min_evidence=self.min_evidence,
         )
 
