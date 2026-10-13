@@ -111,6 +111,6 @@ stages:
     outs:
     - path: data/vector_store/qdrant
       hash: md5
-      md5: c13b257de0e42881e5447be251d8fbcc.dir
+      md5: fda2f19d9cebf173918d459dcff78514.dir
       size: 12464709
       nfiles: 62
