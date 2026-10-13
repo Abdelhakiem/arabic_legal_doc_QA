@@ -10,8 +10,8 @@ stages:
       size: 2599703
     - path: pyproject.toml
       hash: md5
-      md5: f4f9ee37c979ace7bdd0b245560fa421
-      size: 1503
+      md5: d1f4b6413f47e08aefe99c4c33890506
+      size: 1530
     - path: src/arabic_legal_qa/rag/helper.py
       hash: md5
       md5: ea4506f90f3e70f477c1b56575c880c4
@@ -26,8 +26,8 @@ stages:
       size: 16544
     - path: uv.lock
       hash: md5
-      md5: 5b6d034b4bf6cb7646c1ff17b1d95f7f
-      size: 989852
+      md5: 49248ac226e90a0cb49f1d10e6501eff
+      size: 989937
     outs:
     - path: data/processed/article_candidates.json
       hash: md5
