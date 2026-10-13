@@ -469,8 +469,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Extract validated Egyptian Civil Code article JSON")
     parser.add_argument("pdf_path", type=Path, help="Path to the bilingual source PDF")
     parser.add_argument("output_dir", type=Path, help="Folder for candidate JSON and reports")
+    parser.add_argument(
+        "--project-defaults",
+        action="store_true",
+        help="Ignore .env overrides and use extraction defaults committed with the project",
+    )
     args = parser.parse_args(argv)
-    articles, report = extract_to_json(args.pdf_path, args.output_dir)
+    settings = Settings.model_construct() if args.project_defaults else None
+    articles, report = extract_to_json(args.pdf_path, args.output_dir, settings=settings)
     print(json.dumps({"valid": report["valid"], "article_count": len(articles),
                       "errors": report["errors"]}, ensure_ascii=False, indent=2))
     return 0 if report["valid"] else 2

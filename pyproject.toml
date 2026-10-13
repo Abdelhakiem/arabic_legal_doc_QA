@@ -30,6 +30,10 @@ arabic-legal-qa = "arabic_legal_qa.rag.cli:main"
 arabic-legal-qa-evaluate = "arabic_legal_qa.evaluation.runner:main"
 
 [dependency-groups]
+dvc = [
+    "dvc[gdrive]>=3,<4",
+    "pyopenssl>=26.4,<27",
+]
 notebook = [
     "jupyterlab>=4,<5",
     "ipywidgets>=8,<9",

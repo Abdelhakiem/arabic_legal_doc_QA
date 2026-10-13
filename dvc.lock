@@ -1,0 +1,51 @@
+schema: '2.0'
+stages:
+  build-corpus:
+    cmd: uv run python -m arabic_legal_qa.rag.pdf_loader 
+      data/raw/egyptian_civil_law.pdf data/processed --project-defaults
+    deps:
+    - path: data/raw/egyptian_civil_law.pdf
+      hash: md5
+      md5: 5086ef5f16f15d856278db943e58e948
+      size: 2599703
+    - path: pyproject.toml
+      hash: md5
+      md5: f4f9ee37c979ace7bdd0b245560fa421
+      size: 1503
+    - path: src/arabic_legal_qa/rag/helper.py
+      hash: md5
+      md5: ea4506f90f3e70f477c1b56575c880c4
+      size: 2166
+    - path: src/arabic_legal_qa/rag/pdf_loader.py
+      hash: md5
+      md5: 2924920bbd6c80309e418017bab0527f
+      size: 23204
+    - path: src/helpers/config.py
+      hash: md5
+      md5: d27cb168c37ab60f52bb142f67d847f3
+      size: 16544
+    - path: uv.lock
+      hash: md5
+      md5: 5b6d034b4bf6cb7646c1ff17b1d95f7f
+      size: 989852
+    outs:
+    - path: data/processed/article_candidates.json
+      hash: md5
+      md5: 229685efdf7b203695734ceb711f3a79
+      size: 1310724
+    - path: data/processed/articles.json
+      hash: md5
+      md5: 229685efdf7b203695734ceb711f3a79
+      size: 1310724
+    - path: data/processed/extraction_report.json
+      hash: md5
+      md5: 82201581c74b1aa0875e0675d03f7991
+      size: 540527
+    - path: data/processed/extraction_rows.json
+      hash: md5
+      md5: 95c03b01f7c9e58b5b726fec623db545
+      size: 1397740
+    - path: data/processed/validation_status.json
+      hash: md5
+      md5: 4c8761243a61e0647f06f9e4e2fb51b0
+      size: 205
