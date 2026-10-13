@@ -1,134 +1,72 @@
 [
   {
-    "id": "contract_binding_en",
-    "group": "contract_binding",
+    "id": "contract_exception_en",
+    "group": "contract_exception",
     "split": "dev",
     "language": "en",
-    "question": "Can one party change a contract unilaterally?",
+    "question": "Can a court adjust a contractual obligation when exceptional, unforeseeable public events make performance excessively burdensome, though not impossible?",
     "answerable": true,
-    "expected_articles": [
-      147
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "contract_binding_ar",
-    "group": "contract_binding",
-    "split": "dev",
-    "language": "ar",
-    "question": "هل يجوز لأحد المتعاقدين تعديل العقد بمفرده؟",
-    "answerable": true,
-    "expected_articles": [
-      147
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "good_faith_en",
-    "group": "good_faith",
-    "split": "dev",
-    "language": "en",
-    "question": "How must a contract be performed with respect to good faith?",
-    "answerable": true,
-    "expected_articles": [
-      148
-    ],
+    "expected_articles": [147],
     "repeal_case": false
   },
   {
     "id": "good_faith_ar",
-    "group": "good_faith",
+    "group": "good_faith_performance",
     "split": "dev",
     "language": "ar",
-    "question": "كيف يجب تنفيذ العقد من حيث حسن النية؟",
+    "question": "كيف يجب تنفيذ العقد، وهل تقتصر الالتزامات على ما ورد صراحةً فيه؟",
     "answerable": true,
-    "expected_articles": [
-      148
-    ],
+    "expected_articles": [148],
     "repeal_case": false
   },
   {
-    "id": "civil_harm_en",
-    "group": "civil_harm",
+    "id": "counteroffer_en",
+    "group": "contract_formation_counteroffer",
     "split": "dev",
     "language": "en",
-    "question": "What follows when a fault causes damage to another person?",
+    "question": "When is a contract generally formed, and does an acceptance that changes or restricts the offer conclude the contract or count as a new offer?",
     "answerable": true,
-    "expected_articles": [
-      163
-    ],
+    "expected_articles": [89, 96],
     "repeal_case": false
   },
   {
-    "id": "civil_harm_ar",
-    "group": "civil_harm",
+    "id": "breach_rescission_ar",
+    "group": "breach_and_rescission",
     "split": "dev",
     "language": "ar",
-    "question": "ما أثر الخطأ الذي يسبب ضرراً للغير؟",
+    "question": "إذا أخل أحد طرفي عقد ملزم للجانبين بالتزامه، فما الذي يجوز للطرف الآخر طلبه بعد إعذار المدين، وماذا يترتب على فسخ العقد؟",
     "answerable": true,
-    "expected_articles": [
-      163
-    ],
+    "expected_articles": [157, 160],
     "repeal_case": false
   },
   {
-    "id": "marriage_conflict_en",
-    "group": "marriage_conflict",
+    "id": "tort_external_cause_en",
+    "group": "tort_external_cause",
     "split": "dev",
     "language": "en",
-    "question": "Which country’s law governs the effects of marriage under the conflict-of-laws rule?",
+    "question": "What is the general rule when a person's fault causes injury, and what if they prove the injury resulted from force majeure or another cause beyond their control?",
     "answerable": true,
-    "expected_articles": [
-      13
-    ],
+    "expected_articles": [163, 165],
     "repeal_case": false
   },
   {
-    "id": "marriage_conflict_ar",
-    "group": "marriage_conflict",
+    "id": "family_law_out_of_scope_ar",
+    "group": "family_law_out_of_scope",
     "split": "dev",
     "language": "ar",
-    "question": "أي قانون يحكم آثار الزواج وفقاً لقاعدة تنازع القوانين؟",
-    "answerable": true,
-    "expected_articles": [
-      13
-    ],
+    "question": "ما الشروط القانونية لحضانة الأطفال بعد الطلاق؟",
+    "answerable": false,
+    "expected_articles": [],
     "repeal_case": false
   },
   {
-    "id": "sale_definition_en",
-    "group": "sale_definition",
-    "split": "heldout",
-    "language": "en",
-    "question": "What is the definition of a sale contract?",
-    "answerable": true,
-    "expected_articles": [
-      418
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "sale_definition_ar",
-    "group": "sale_definition",
+    "id": "offer_deadlines_ar",
+    "group": "offer_acceptance_deadlines",
     "split": "heldout",
     "language": "ar",
-    "question": "ما تعريف عقد البيع؟",
+    "question": "إذا حُدد موعد للقبول، فهل يظل الموجب ملتزماً بإيجابه حتى انتهائه؟ وماذا يحدث إذا لم يُحدد موعد وصدر الإيجاب في مجلس العقد أو عبر الهاتف؟",
     "answerable": true,
-    "expected_articles": [
-      418
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "lease_definition_en",
-    "group": "lease_definition",
-    "split": "heldout",
-    "language": "en",
-    "question": "What is the definition of a lease contract?",
-    "answerable": true,
-    "expected_articles": [
-      558
-    ],
+    "expected_articles": [93, 94],
     "repeal_case": false
   },
   {
@@ -136,145 +74,27 @@
     "group": "lease_definition",
     "split": "heldout",
     "language": "ar",
-    "question": "ما تعريف عقد الإيجار؟",
+    "question": "ما العناصر التي يعرّف بها القانون عقد الإيجار من حيث الانتفاع والمدة والأجرة؟",
     "answerable": true,
-    "expected_articles": [
-      558
-    ],
+    "expected_articles": [558],
     "repeal_case": false
   },
   {
-    "id": "owner_rights_en",
-    "group": "owner_rights",
+    "id": "repeal_status_en",
+    "group": "repeal_status",
     "split": "heldout",
     "language": "en",
-    "question": "What rights does the owner have over a thing within the limits of the law?",
+    "question": "According to this code edition, are Articles 60 and 400 in force or marked as repealed?",
     "answerable": true,
-    "expected_articles": [
-      802
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "owner_rights_ar",
-    "group": "owner_rights",
-    "split": "heldout",
-    "language": "ar",
-    "question": "ما حقوق مالك الشيء في حدود القانون؟",
-    "answerable": true,
-    "expected_articles": [
-      802
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "possession_period_en",
-    "group": "possession_period",
-    "split": "heldout",
-    "language": "en",
-    "question": "How long must possession continue to acquire ownership under the general prescription rule?",
-    "answerable": true,
-    "expected_articles": [
-      968
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "possession_period_ar",
-    "group": "possession_period",
-    "split": "heldout",
-    "language": "ar",
-    "question": "ما مدة الحيازة اللازمة لاكتساب الملكية وفقاً لقاعدة التقادم العامة؟",
-    "answerable": true,
-    "expected_articles": [
-      968
-    ],
-    "repeal_case": false
-  },
-  {
-    "id": "repeal_54_en",
-    "group": "repeal_54",
-    "split": "dev",
-    "language": "en",
-    "question": "Is Article 54 repealed according to this source?",
-    "answerable": true,
-    "expected_articles": [
-      54
-    ],
+    "expected_articles": [60, 400],
     "repeal_case": true
   },
   {
-    "id": "repeal_54_ar",
-    "group": "repeal_54",
-    "split": "dev",
-    "language": "ar",
-    "question": "هل المادة ٥٤ ملغاة وفقاً لهذا المصدر؟",
-    "answerable": true,
-    "expected_articles": [
-      54
-    ],
-    "repeal_case": true
-  },
-  {
-    "id": "repeal_389_en",
-    "group": "repeal_389",
+    "id": "criminal_law_out_of_scope_en",
+    "group": "criminal_law_out_of_scope",
     "split": "heldout",
-    "language": "en",
-    "question": "What does this source say about the status of Article 389?",
-    "answerable": true,
-    "expected_articles": [
-      389
-    ],
-    "repeal_case": true
-  },
-  {
-    "id": "repeal_389_ar",
-    "group": "repeal_389",
-    "split": "heldout",
-    "language": "ar",
-    "question": "ماذا يقول هذا المصدر عن حالة المادة ٣٨٩؟",
-    "answerable": true,
-    "expected_articles": [
-      389
-    ],
-    "repeal_case": true
-  },
-  {
-    "id": "criminal_sentence",
-    "group": "criminal_sentence",
-    "split": "dev",
     "language": "en",
     "question": "What prison sentence does Egyptian criminal law prescribe for burglary?",
-    "answerable": false,
-    "expected_articles": [],
-    "repeal_case": false
-  },
-  {
-    "id": "sql_index",
-    "group": "sql_index",
-    "split": "dev",
-    "language": "ar",
-    "question": "كيف أنشئ فهرساً لجدول في PostgreSQL؟",
-    "answerable": false,
-    "expected_articles": [],
-    "repeal_case": false
-  },
-  {
-    "id": "visa_fee",
-    "group": "visa_fee",
-    "split": "heldout",
-    "language": "en",
-    "question": "What is the current tourist visa fee for Japan?",
-    "answerable": false,
-    "expected_articles": [],
-    "repeal_case": false
-  },
-  {
-    "id": "central_bank",
-    "group": "central_bank",
-    "split": "heldout",
-    "language": "ar",
-    "question": "ما سعر الفائدة الذي أعلنه البنك المركزي أمس؟",
     "answerable": false,
     "expected_articles": [],
     "repeal_case": false

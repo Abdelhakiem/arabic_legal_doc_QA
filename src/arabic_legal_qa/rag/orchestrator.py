@@ -56,6 +56,7 @@ Retrieved evidence:
 User question:
 {question}
 """
+ANSWER_PROMPT_VERSION = "legal-grounded-v1"
 
 
 def _preferred_language(text: str) -> str:
@@ -85,6 +86,7 @@ class RAG:
     llm: Any | None = field(default=None, init=False)
     qdrant_client: Any | None = field(default=None, init=False)
     qdrant_config: QdrantConfig | None = field(default=None, init=False)
+    registry_config_version: str | None = field(default=None, init=False)
 
     def _load_embeddings(self) -> EmbeddingBundle:
         if self.embedding_bundle is None:
@@ -133,11 +135,18 @@ class RAG:
                 corpus_hash=corpus_hash,
             )
             qdrant_config = self._qdrant_config()
+            chunking_config = replace(
+                get_settings().chunking_config(),
+                embedding_limit=bundle.config.embedding_limit,
+                chunk_tokens=self.config.chunk_tokens,
+                overlap=self.config.chunk_overlap,
+            )
             result = build_index(
                 documents=chunks,
                 embedding_bundle=bundle,
                 config=qdrant_config,
                 corpus_hash=corpus_hash,
+                chunking_config=chunking_config,
             )
             self.qdrant_client = result["client"]
             summary = {
@@ -184,12 +193,26 @@ class RAG:
             import json
 
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            # Resolve the embedding revision before deciding whether vectors
+            # can be reused. The config may omit a revision, while the index
+            # manifest records the resolved immutable commit SHA.
+            active_embedding = self._load_embeddings().config
             if manifest.get("complete") is not True:
                 return False
             # A pre-ONNX index has vectors from a different inference path.
             # Rebuild it once so the manifest always describes the active
             # backend and the collection is internally consistent.
             if manifest.get("embedding_backend") != "onnxruntime-cpu":
+                return False
+            if manifest.get("embedding_model") != active_embedding.model_name:
+                return False
+            if manifest.get("embedding_revision") != active_embedding.model_revision:
+                return False
+            if manifest.get("onnx_model_filename") != active_embedding.onnx_model_filename:
+                return False
+            if manifest.get("chunk_tokens") != self.config.chunk_tokens:
+                return False
+            if manifest.get("chunk_overlap") != self.config.chunk_overlap:
                 return False
             client = open_index(self._qdrant_config())
             count = client.count(self._qdrant_config().collection_name, exact=True).count
@@ -282,7 +305,7 @@ class RAG:
         return references
 
     def query(self, question: str, k: int | None = None, prefetch_k: int | None = None,
-              min_evidence: int | None = None) -> dict[str, Any]:
+              min_evidence: int | None = None, *, include_trace: bool = False) -> dict[str, Any]:
         """Retrieve using the user's question verbatim and answer with evidence."""
         k = self.config.retrieval_k if k is None else k
         prefetch_k = self.config.prefetch_k if prefetch_k is None else prefetch_k
@@ -326,7 +349,13 @@ class RAG:
                         "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                     },
                 )
-                return {"answer": answer, "references": references, "evidence_count": 0}
+                result = {"answer": answer, "references": references, "evidence_count": 0}
+                if include_trace:
+                    result["retrieved_contexts"] = [doc.page_content for doc in documents]
+                    result["retrieved_article_numbers"] = [
+                        doc.metadata.get("article_number") for doc in documents
+                    ]
+                return result
 
             context_parts = []
             for index, document in enumerate(documents, start=1):
@@ -348,6 +377,11 @@ class RAG:
                 "references": references,
                 "evidence_count": len(documents),
             }
+            if include_trace:
+                result["retrieved_contexts"] = [doc.page_content for doc in documents]
+                result["retrieved_article_numbers"] = [
+                    doc.metadata.get("article_number") for doc in documents
+                ]
             logger.info(
                 "RAG answer generated",
                 extra={
@@ -391,11 +425,47 @@ def create_rag(root: Path | str | None = None) -> RAG:
     else:
         resolved_root = Path(root).expanduser().resolve()
     settings = get_settings(resolved_root / ".env")
-    return RAG(
-        settings.rag_config(resolved_root),
-        settings.embedding_config(),
-        settings.llm_config(),
-    )
+    rag_config = settings.rag_config(resolved_root)
+    embedding_config = settings.embedding_config()
+    if settings.mlflow_tracking_uri:
+        from helpers.mlflow_registry import load_registered_rag_config
+
+        try:
+            resolved = load_registered_rag_config(settings)
+        except Exception:
+            if settings.mlflow_config_required:
+                raise
+            logger.warning(
+                "MLflow registry config unavailable; using centralized defaults",
+                exc_info=True,
+                extra={"event": "mlflow.registry.config_fallback"},
+            )
+            resolved = None
+        if resolved is None and settings.mlflow_config_required:
+            raise RuntimeError("MLflow config is required but no registry alias was resolved")
+        if resolved is not None:
+            registered, identity = resolved
+            rag_config = replace(
+                rag_config,
+                chunk_tokens=registered.chunk_tokens,
+                chunk_overlap=registered.chunk_overlap,
+                retrieval_k=registered.retrieval_k,
+                prefetch_k=registered.prefetch_k,
+                min_evidence=registered.min_evidence,
+            )
+            embedding_config = replace(
+                embedding_config,
+                model_name=registered.embedding_model,
+                model_revision=registered.embedding_revision,
+            )
+            logger.info(
+                "Applying registered RAG configuration",
+                extra={"event": "mlflow.registry.config_applied", "model_version": identity},
+            )
+            rag = RAG(rag_config, embedding_config, settings.llm_config())
+            rag.registry_config_version = identity
+            return rag
+    return RAG(rag_config, embedding_config, settings.llm_config())
 
 
 def ingest(root: Path | str | None = None) -> dict[str, Any]:

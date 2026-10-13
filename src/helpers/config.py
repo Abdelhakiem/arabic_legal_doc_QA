@@ -63,6 +63,11 @@ DEFAULT_MIN_EVIDENCE = 1
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8000
 DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_MLFLOW_CONFIG_MODEL = "arabic-legal-rag-config"
+DEFAULT_MLFLOW_CONFIG_ALIAS = "champion"
+DEFAULT_MLFLOW_EVALUATION = "rag-config-experiments"
+DEFAULT_MLFLOW_TRACKING_URI = "http://localhost:5000"
+DEFAULT_MLFLOW_MIN_FAITHFULNESS = 0.75
 
 # Backward-compatible constants for existing parser consumers.
 EXTRACTOR_VERSION = DEFAULT_EXTRACTOR_VERSION
@@ -119,6 +124,7 @@ class QdrantConfig:
     sparse_model: str = DEFAULT_QDRANT_SPARSE_MODEL
     exact_search: bool = DEFAULT_QDRANT_EXACT_SEARCH
     manifest_name: str = DEFAULT_QDRANT_MANIFEST
+    sparse_cache_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +172,31 @@ class RAGConfig:
             sparse_model=self.qdrant_sparse_model,
             exact_search=self.exact_search,
             manifest_name=self.qdrant_manifest_name,
+            sparse_cache_path=self.model_cache_dir / "fastembed_sparse",
         )
+
+
+@dataclass(frozen=True)
+class RegisteredRAGConfig:
+    """Inference settings published as a versioned MLflow model config."""
+
+    chunk_tokens: int = DEFAULT_CHUNK_TOKENS
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
+    embedding_revision: str | None = None
+    retrieval_k: int = DEFAULT_RETRIEVAL_K
+    prefetch_k: int = DEFAULT_PREFETCH_K
+    min_evidence: int = DEFAULT_MIN_EVIDENCE
+
+    def __post_init__(self) -> None:
+        if self.chunk_tokens <= 0:
+            raise ValueError("chunk_tokens must be positive")
+        if self.chunk_overlap < 0 or self.chunk_overlap >= self.chunk_tokens:
+            raise ValueError("chunk_overlap must be nonnegative and smaller than chunk_tokens")
+        if self.retrieval_k <= 0 or self.prefetch_k < self.retrieval_k:
+            raise ValueError("Require retrieval_k > 0 and prefetch_k >= retrieval_k")
+        if self.min_evidence < 0:
+            raise ValueError("min_evidence must be nonnegative")
 
 
 class Settings(BaseSettings):
@@ -252,6 +282,15 @@ class Settings(BaseSettings):
     host: str = DEFAULT_API_HOST
     port: int = DEFAULT_API_PORT
     log_level: str = DEFAULT_LOG_LEVEL
+
+    # MLflow registry lookup is opt-in outside Compose. When enabled but the
+    # alias is not published yet, default to the local settings and log it.
+    mlflow_tracking_uri: str | None = None
+    mlflow_config_model: str = DEFAULT_MLFLOW_CONFIG_MODEL
+    mlflow_config_alias: str = DEFAULT_MLFLOW_CONFIG_ALIAS
+    mlflow_config_required: bool = False
+    mlflow_experiment_name: str = DEFAULT_MLFLOW_EVALUATION
+    mlflow_min_faithfulness: float = DEFAULT_MLFLOW_MIN_FAITHFULNESS
 
     def embedding_config(self) -> EmbeddingConfig:
         return EmbeddingConfig(
@@ -373,6 +412,7 @@ __all__ = [
     "ChunkingConfig",
     "QdrantConfig",
     "RAGConfig",
+    "RegisteredRAGConfig",
     "EXTRACTOR_VERSION",
     "EXPECTED_ARTICLES",
     "REPEAL_RANGES",

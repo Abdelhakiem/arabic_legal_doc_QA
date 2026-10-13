@@ -2,7 +2,7 @@
 
 A bilingual, retrieval-augmented Q&A service over the Egyptian Civil Code (Law 131 of 1948). The service answers Arabic and English questions using only validated Civil Code articles, returns human-verifiable article citations, and abstains when the corpus does not provide sufficient support.
 
-The repository contains a validated corpus pipeline, a local hybrid Qdrant index, a reusable RAG orchestrator, and a FastAPI service. The design and remaining delivery checklist are maintained in [AGENT.md](AGENT.md) and [TODO.md](TODO.md).
+The repository contains a validated corpus pipeline, a local hybrid Qdrant index, a reusable RAG orchestrator, a FastAPI service, and an MLflow-backed evaluation/config registry. The design and remaining delivery checklist are maintained in [AGENT.md](AGENT.md) and [TODO.md](TODO.md).
 
 ## Foundation extraction status
 
@@ -132,7 +132,7 @@ src/
   helpers/config.py       # centralized project settings
   arabic_legal_qa/rag/    # ingestion, Qdrant, retrieval, LLM, citations
 Dockerfile                # single application image
-compose.yaml              # one `app` service; supporting services can be added later
+compose.yaml              # `app` plus persistent MLflow tracking/registry service
 data/                     # local source, processed corpus, and Qdrant artifacts
 ```
 
@@ -146,7 +146,7 @@ data/                     # local source, processed corpus, and Qdrant artifacts
 
 ## Run with Docker Compose
 
-The deployment uses one Docker image and one Compose service named `app`. That image contains the FastAPI app, the RAG package, the validated articles, and the embedded local Qdrant index—there is no separate RAG or Qdrant service. Ollama is intentionally not included; Compose selects Groq, so set `GROQ_TOKEN` in `.env`. The Hugging Face embedding model is downloaded on first startup and persisted in a named volume, so first startup needs internet access and may take a few minutes.
+Compose runs two services from the same image: `app` (FastAPI/RAG) and `mlflow` (tracking UI, REST API, and Model Registry). Qdrant remains embedded in the app container; there is no separate Qdrant service. MLflow run metadata and artifacts persist in the `mlflow-data` named volume using SQLite/local artifacts, suitable for a single-host deployment. Ollama is intentionally not included; Compose selects Groq, so set `GROQ_TOKEN` in `.env`. The Hugging Face embedding model is downloaded on first startup and persisted in a named volume, so first startup needs internet access and may take a few minutes.
 
 Before building, make sure the local artifact bundle exists: `data/raw/egyptian_civil_law.pdf`, `data/processed/articles.json`, and the complete `data/vector_store/qdrant/` directory including `manifest.json`. These generated/data files are git-ignored and are not currently fetched automatically by Compose; a fresh clone needs that bundle supplied separately. The image snapshots the corpus and index at build time, so rebuild the image after changing them.
 
@@ -164,7 +164,43 @@ docker compose up --build -d --wait
 curl -fsS http://localhost:8000/health && curl -fsS http://localhost:8000/ask -H 'Content-Type: application/json' -d '{"question":"ما آثار العقد؟"}'
 ```
 
-The Compose health check waits for the API and RAG resources to become ready. Keep `.env` private; do not commit credentials. This uses a local image build, so Docker Compose v2 and the artifact bundle above are prerequisites.
+The Compose health checks wait for MLflow and the API/RAG resources to become ready. MLflow is available at `http://localhost:5000`; its data survives container recreation in `mlflow-data`. Its Host allowlist is limited to the local client and Compose service hostnames; the published port is also bound to loopback. Do not publish it on a network interface without configuring a restrictive allowlist and authentication. The app looks for model `arabic-legal-rag-config` with alias `champion` at startup. Before an alias is promoted it warns and uses centralized defaults; set `MLFLOW_CONFIG_REQUIRED=true` to make startup fail instead. After promoting a new config, restart `app` to load it; the service intentionally does not mutate a live index/config mid-request. Keep `.env` private; do not commit credentials. This uses a local image build, so Docker Compose v2 and the artifact bundle above are prerequisites.
+
+### MLflow experiments and RAGAS
+
+Install the evaluation extra locally and run the six candidates against `dev`. The evaluator uses two stages: it scores expected-article hit rate/recall for every candidate without calling Groq, then runs answer generation and RAGAS only for the two retrieval leaders. The quick mode uses four balanced Arabic/English questions; full mode uses the complete dev split. Candidates that differ only in `k` share the same temporary Qdrant index.
+
+| Run | Chunk tokens | Overlap | Retrieval `k` |
+| --- | ---: | ---: | ---: |
+| 1 | 256 | 0 | 5 |
+| 2 | 384 | 0 | 5 |
+| 3 | 480 | 0 | 5 |
+| 4 | 384 | 32 | 5 |
+| 5 | 480 | 32 | 5 |
+| 6 | 384 | 32 | 8 |
+
+```bash
+uv sync --extra evaluation --group test
+uv run --extra evaluation arabic-legal-qa-evaluate --mode quick
+```
+
+Ensure Compose is running (`docker compose up -d mlflow app`) and `GROQ_TOKEN` is set. The evaluator defaults to `http://localhost:5000` if `MLFLOW_TRACKING_URI` is unset. In the MLflow UI, open `rag-config-experiments`: all six runs have retrieval metrics; finalist runs additionally have `faithfulness` and context precision (the default core judge metrics). RAGAS concurrency defaults to one worker to avoid request bursts; this limits concurrency, not total calls. Use `--judge-metrics all` on finalists to add ContextUtilization and AnswerRelevancy, or `--finalists 1` to reduce Groq usage further. Each run logs config, corpus/evaluation hashes, Qdrant manifest, and per-question results. The winner is registered only from generation-scored finalists and only if faithfulness meets `MLFLOW_MIN_FAITHFULNESS` (default `0.75`); use `--no-promote` to prevent alias changes.
+
+For a slower full-dev comparison, or to change the finalist count:
+
+```bash
+uv run --extra evaluation arabic-legal-qa-evaluate --mode full --finalists 2
+```
+
+Retrieval results, generated answers, and RAGAS scores are cached separately under `data/evaluation/cache`, keyed by the relevant corpus/config/question/prompt/model inputs. Re-running the same command reuses completed stages; use `--no-cache` to force recomputation. Delete the cache directory only when you intentionally want to discard those saved evaluation outputs.
+
+After promotion, restart the app so it loads the alias. Then validate that frozen winner on held-out questions (this command cannot promote or tune):
+
+```bash
+uv run --extra evaluation arabic-legal-qa-evaluate --validate-champion
+```
+
+The compact foundation set has 10 questions (6 dev, 4 held-out), balanced across Arabic and English. It includes multi-article retrieval cases, repeal-status checks, and out-of-scope questions. It has expected article IDs but no reviewed reference answers, so retrieval screening uses deterministic expected-article hit/recall and finalist RAGAS runs use no-reference context precision and faithfulness by default. `--judge-metrics all` also adds context utilization and answer relevancy. If every question in a split has a human-reviewed `reference_answer`, the runner automatically adds reference-based context precision, context recall, and answer correctness. Do not fill those answers with model-generated text and call them gold labels; this small set is for initial comparisons, not statistically reliable claims.
 
 For local development without Docker, install dependencies with `uv sync --all-groups`, then run the CLI or `uv run uvicorn api.app:app --host 0.0.0.0 --port 8000` from the repository root. The command-line entry point is `arabic-legal-qa`. If you want to use Ollama locally, install its optional adapter with `uv sync --all-groups --extra ollama` and configure `LLM_PROVIDER=ollama`.
 

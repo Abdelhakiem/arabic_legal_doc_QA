@@ -61,7 +61,22 @@ def token_count(tokenizer: Any, text: str) -> int:
             tokenizer.model_max_length = previous_limit
 
 
-def split_text(text: str, tokenizer: Any, limit: int) -> list[str]:
+def _trailing_token_window(text: str, tokenizer: Any, token_limit: int) -> str:
+    """Return the largest character suffix whose token count fits the window."""
+    if token_limit <= 0 or not text:
+        return ""
+    lo, hi = 0, len(text)
+    best = len(text)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if token_count(tokenizer, text[mid:]) <= token_limit:
+            best, hi = mid, mid - 1
+        else:
+            lo = mid + 1
+    return text[best:]
+
+
+def split_text(text: str, tokenizer: Any, limit: int, overlap: int = 0) -> list[str]:
     """Split text into chunks no larger than `limit` tokenizer tokens.
 
     The splitter tries increasingly fine boundaries: numbered legal
@@ -71,8 +86,20 @@ def split_text(text: str, tokenizer: Any, limit: int) -> list[str]:
 
     if limit <= 0:
         raise ValueError("Token limit must be positive")
+    if overlap < 0 or overlap >= limit:
+        raise ValueError("Overlap must be nonnegative and smaller than the token limit")
     if token_count(tokenizer, text) <= limit:
         return [text]
+
+    if overlap:
+        base_chunks = split_text(text, tokenizer, limit - overlap)
+        chunks = [base_chunks[0]]
+        for previous, current in zip(base_chunks, base_chunks[1:]):
+            prefix = _trailing_token_window(previous, tokenizer, overlap)
+            chunks.append(prefix + current)
+        if any(token_count(tokenizer, chunk) > limit for chunk in chunks):
+            raise AssertionError("Overlapping chunk exceeded the token limit")
+        return chunks
 
     paragraphs = re.split(r"(?<=\n)(?=\s*[()]*[٠-٩0-9]+[).(\s])", text)
     if len(paragraphs) == 1:
@@ -140,9 +167,6 @@ def chunk_documents(documents: Iterable[Document], tokenizer: Any, config: Chunk
     """Split LangChain documents while preserving article metadata."""
 
     started = time.perf_counter()
-    if config.overlap != 0:
-        raise ValueError("This chunker supports zero overlap only")
-
     limit = _chunk_limit(config)
     source_documents = list(documents)
     logger.info(
@@ -160,7 +184,9 @@ def chunk_documents(documents: Iterable[Document], tokenizer: Any, config: Chunk
             metadata = dict(document.metadata)
             article_number = metadata["article_number"]
             language = metadata["language"]
-            for position, text in enumerate(split_text(document.page_content, tokenizer, limit)):
+            for position, text in enumerate(
+                split_text(document.page_content, tokenizer, limit, config.overlap)
+            ):
                 chunks.append(Document(page_content=text, metadata={
                     **metadata,
                     "chunk_id": _chunk_id(corpus_hash, article_number, language, position, text, limit),
@@ -204,9 +230,6 @@ def make_chunks(articles: Iterable[Article], tokenizer: Any, config: ChunkingCon
     deterministic for reproducible vector-store inserts.
     """
 
-    if config.overlap != 0:
-        raise ValueError("This chunker supports zero overlap only")
-
     limit = _chunk_limit(config)
     documents: list[Document] = []
     for article in articles:
@@ -214,7 +237,7 @@ def make_chunks(articles: Iterable[Article], tokenizer: Any, config: ChunkingCon
         for language, text in (("ar", article.text_ar), ("en", article.text_en)):
             if not text:
                 continue
-            for position, chunk in enumerate(split_text(text, tokenizer, limit)):
+            for position, chunk in enumerate(split_text(text, tokenizer, limit, config.overlap)):
                 documents.append(document_factory(page_content=chunk, metadata={
                     **metadata,
                     "language": language,

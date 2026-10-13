@@ -24,6 +24,7 @@ reports/notebook_review/
 reports/experiments/
 reports/executed_*.ipynb
 data/experiments/
+data/evaluation/cache/
 data/model_cache/
 mlruns/
 *.db
