@@ -33,6 +33,7 @@ mlruns/
 *.db
 *.db-shm
 *.db-wal
+:memory:.ses
 
 # OS/editor files
 .DS_Store

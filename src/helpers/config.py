@@ -36,6 +36,9 @@ PDF_ARTICLE_452_REPAIR_PAGE = 59
 
 # Pipeline and model defaults.
 DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+# Keep pipeline builds reproducible. Runtime users can intentionally override
+# this via E5_SMALL_REVISION; DVC stages use the committed default.
+DEFAULT_EMBEDDING_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
 DEFAULT_EMBEDDING_ONNX_FILENAME = "onnx/model.onnx"
 DEFAULT_EMBEDDING_LIMIT = 512
 DEFAULT_EMBEDDING_BATCH_SIZE = 4
@@ -80,7 +83,7 @@ class EmbeddingConfig:
     """ONNX embedding model contract shared by index and retrieval."""
 
     model_name: str = DEFAULT_EMBEDDING_MODEL
-    model_revision: str | None = None
+    model_revision: str | None = DEFAULT_EMBEDDING_REVISION
     onnx_model_filename: str = DEFAULT_EMBEDDING_ONNX_FILENAME
     embedding_limit: int = DEFAULT_EMBEDDING_LIMIT
     batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE
@@ -244,7 +247,8 @@ class Settings(BaseSettings):
     # Embedding and chunking.
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_revision: str | None = Field(
-        default=None, validation_alias=AliasChoices("E5_SMALL_REVISION", "EMBEDDING_REVISION")
+        default=DEFAULT_EMBEDDING_REVISION,
+        validation_alias=AliasChoices("E5_SMALL_REVISION", "EMBEDDING_REVISION"),
     )
     embedding_onnx_filename: str = DEFAULT_EMBEDDING_ONNX_FILENAME
     embedding_limit: int = DEFAULT_EMBEDDING_LIMIT
