@@ -4,6 +4,7 @@ Configure logging once at an executable boundary (CLI/API startup). Pipeline
 modules should use ``logging.getLogger(__name__)`` and attach only safe
 metadata; do not log raw questions, retrieved text, answers, prompts, or secrets.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -11,8 +12,9 @@ import datetime as dt
 import json
 import logging
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from helpers.config import get_settings
 
@@ -52,9 +54,9 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": dt.datetime.fromtimestamp(
-                record.created, tz=dt.timezone.utc
-            ).isoformat(timespec="milliseconds"),
+            "timestamp": dt.datetime.fromtimestamp(record.created, tz=dt.UTC).isoformat(
+                timespec="milliseconds"
+            ),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -75,7 +77,9 @@ class JsonFormatter(logging.Formatter):
             payload["exception"] = self.formatException(record.exc_info)
         if record.stack_info:
             payload["stack"] = self.formatStack(record.stack_info)
-        return json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":"))
+        return json.dumps(
+            payload, ensure_ascii=False, default=str, separators=(",", ":")
+        )
 
 
 @contextmanager

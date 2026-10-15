@@ -4,20 +4,30 @@ Candidates and diagnostics are always written. Canonical JSON is written only af
 complete 1–1149 article validation gate passes. Source corrections are explicit and
 reported so the canonical corpus remains auditable.
 """
+
 from __future__ import annotations
+
 import argparse
 import json
 import logging
 import re
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Literal
+
 from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from arabic_legal_qa.rag.helper import (
+    file_hash,
+    glyph_text,
+    save_json,
+    stable_hash,
+)
 from helpers.config import Settings, get_settings
-from arabic_legal_qa.rag.helper import file_hash, glyph_text, normalize_search, save_json, stable_hash
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +77,16 @@ ArticleLanguage = Literal["ar", "en", "bilingual"]
 
 def extract_rows(pdf_path, settings: Settings | None = None):
     import pdfplumber
+
     settings = settings or get_settings()
     rows, issues = [], []
     table_settings = {
         "vertical_strategy": "explicit",
-        "explicit_vertical_lines": [settings.pdf_table_left_x, settings.pdf_table_middle_x,
-                                    settings.pdf_table_right_x],
+        "explicit_vertical_lines": [
+            settings.pdf_table_left_x,
+            settings.pdf_table_middle_x,
+            settings.pdf_table_right_x,
+        ],
         "snap_tolerance": settings.pdf_table_snap_tolerance,
         "intersection_tolerance": settings.pdf_table_intersection_tolerance,
     }
@@ -84,19 +98,32 @@ def extract_rows(pdf_path, settings: Settings | None = None):
         for page_number, page in enumerate(pdf.pages, 1):
             tables = page.find_tables(table_settings)
             if len(tables) != 1:
-                issues.append(f"Page {page_number}: expected exactly one bilingual table")
+                issues.append(
+                    f"Page {page_number}: expected exactly one bilingual table"
+                )
                 continue
             for row in tables[0].rows:
                 if len(row.cells) != 2 or any(c is None for c in row.cells):
-                    issues.append(f"Page {page_number}: uncertain table boundary {row.bbox}")
+                    issues.append(
+                        f"Page {page_number}: uncertain table boundary {row.bbox}"
+                    )
                     continue
                 left, right = (page.within_bbox(box) for box in row.cells)
                 en = (left.extract_text() or "").strip()
                 ar = glyph_text(right.chars)
                 visible = [c for c in left.chars if c["text"].strip()]
-                bold = bool(visible) and all("bold" in c["fontname"].lower() for c in visible)
-                rows.append({"page": page_number, "en": en, "ar": ar, "bold": bold,
-                             "boxes": row.cells})
+                bold = bool(visible) and all(
+                    "bold" in c["fontname"].lower() for c in visible
+                )
+                rows.append(
+                    {
+                        "page": page_number,
+                        "en": en,
+                        "ar": ar,
+                        "bold": bold,
+                        "boxes": row.cells,
+                    }
+                )
             if page_number % settings.pdf_progress_interval_pages == 0:
                 logger.debug(
                     "PDF extraction progress",
@@ -112,7 +139,7 @@ def extract_rows(pdf_path, settings: Settings | None = None):
 
 def heading_number(text, language):
     pattern = r"^Article\s*(\d+)\b" if language == "en" else r"^مادة\s*[()]*\s*(\d+)"
-    match = re.match(pattern, text, re.I)
+    match = re.match(pattern, text, re.IGNORECASE)
     return int(match[1]) if match else None
 
 
@@ -129,10 +156,19 @@ def parse_articles(rows, settings: Settings | None = None):
         if number in records:
             errors.append(f"Duplicate article {number} at page {row['page']}")
             return
-        records[number] = {"article_number": number, **hierarchy, "text_ar": ar, "text_en": en or None,
-                           "is_repealed": repealed, "source_page": row["page"],
-                           "citation": f"Egyptian Civil Code, Article {number}"}
-        diagnostics[number] = {"pages": [row["page"]], "regions": [{"page": row["page"], "boxes": row["boxes"]}]}
+        records[number] = {
+            "article_number": number,
+            **hierarchy,
+            "text_ar": ar,
+            "text_en": en or None,
+            "is_repealed": repealed,
+            "source_page": row["page"],
+            "citation": f"Egyptian Civil Code, Article {number}",
+        }
+        diagnostics[number] = {
+            "pages": [row["page"]],
+            "regions": [{"page": row["page"], "boxes": row["boxes"]}],
+        }
         current = number
 
     for row in rows:
@@ -142,15 +178,24 @@ def parse_articles(rows, settings: Settings | None = None):
                 body_started = True
             else:
                 continue  # Opening enactment has its own numbering and is outside this corpus.
-        if (row["page"] == settings.pdf_article_452_repair_page
-                and en.startswith("rticle 452") and heading_number(ar, "ar") == 452):
+        if (
+            row["page"] == settings.pdf_article_452_repair_page
+            and en.startswith("rticle 452")
+            and heading_number(ar, "ar") == 452
+        ):
             en = "A" + en
-            warnings.append("Page 59: recognized printed 'rticle 452' using the matching Arabic heading")
+            warnings.append(
+                "Page 59: recognized printed 'rticle 452' using the matching Arabic heading"
+            )
         # Notices represent whole ranges, not missing article bodies.
-        notice = re.search(r"Articles?\s*(\d+)\s*[-–]\s*(\d+).*repealed", en, re.I | re.S)
+        notice = re.search(
+            r"Articles?\s*(\d+)\s*[-–]\s*(\d+).*repealed", en, re.IGNORECASE | re.DOTALL
+        )
         if notice:
             lo, hi = int(notice[1]), int(notice[2])
-            if (lo, hi) not in settings.repeal_ranges or not re.search(r"ألغيت|ملغاة", ar):
+            if (lo, hi) not in settings.repeal_ranges or not re.search(
+                r"ألغيت|ملغاة", ar
+            ):
                 errors.append(f"Unverified repeal range at page {row['page']}")
                 continue
             for number in range(lo, hi + 1):
@@ -166,8 +211,14 @@ def parse_articles(rows, settings: Settings | None = None):
                     warnings.append(message + "; handled by explicit source correction")
                 else:
                     errors.append(message)
-            start(number, row, re.sub(r"^مادة[^\n]*(?:\n|$)", "", ar).strip(),
-                  re.sub(r"^Article\s*\d+[^\n]*(?:\n|$)", "", en, flags=re.I).strip())
+            start(
+                number,
+                row,
+                re.sub(r"^مادة[^\n]*(?:\n|$)", "", ar).strip(),
+                re.sub(
+                    r"^Article\s*\d+[^\n]*(?:\n|$)", "", en, flags=re.IGNORECASE
+                ).strip(),
+            )
             pending_heading = None
             continue
         if arabic_number is not None:
@@ -176,17 +227,29 @@ def parse_articles(rows, settings: Settings | None = None):
         if not en and not ar:
             continue
         if row["bold"]:
-            key = next((k for k, pattern in (("book", r"^BOOK\b"), ("chapter", r"^CHAPTER\b"),
-                                              ("section", r"^SECTION\b")) if re.match(pattern, en, re.I)), None)
-            if re.match(r"^(FIRST|SECOND) PART", en, re.I):
+            key = next(
+                (
+                    k
+                    for k, pattern in (
+                        ("book", r"^BOOK\b"),
+                        ("chapter", r"^CHAPTER\b"),
+                        ("section", r"^SECTION\b"),
+                    )
+                    if re.match(pattern, en, re.IGNORECASE)
+                ),
+                None,
+            )
+            if re.match(r"^(FIRST|SECOND) PART", en, re.IGNORECASE):
                 current = None
                 continue
             if key:
                 hierarchy[key] = " ".join(en.split())
                 keys = list(hierarchy)
-                for child in keys[keys.index(key) + 1:]:
+                for child in keys[keys.index(key) + 1 :]:
                     hierarchy[child] = None
-                pending_heading = key if len(en.splitlines()) == 1 and len(en.split()) <= 2 else None
+                pending_heading = (
+                    key if len(en.splitlines()) == 1 and len(en.split()) <= 2 else None
+                )
             elif pending_heading:
                 hierarchy[pending_heading] += " " + " ".join(en.split())
                 pending_heading = None
@@ -203,12 +266,16 @@ def parse_articles(rows, settings: Settings | None = None):
                 record[key] = ((record[key] or "") + "\n" + value).strip()
         if row["page"] not in diagnostics[current]["pages"]:
             diagnostics[current]["pages"].append(row["page"])
-        diagnostics[current]["regions"].append({"page": row["page"], "boxes": row["boxes"]})
+        diagnostics[current]["regions"].append(
+            {"page": row["page"], "boxes": row["boxes"]}
+        )
 
     if 1022 in records and not records[1022]["text_ar"].strip():
         records[1022]["text_ar"] = SOURCE_CORRECTIONS[1022]["text"]
         diagnostics[1022]["source_correction"] = SOURCE_CORRECTIONS[1022]
-        warnings.append("Page 147: applied explicit Arabic source correction for Article 1022")
+        warnings.append(
+            "Page 147: applied explicit Arabic source correction for Article 1022"
+        )
         if 1021 in records:
             records[1021]["text_ar"] = re.sub(
                 r"\n\(?٢\(?[\s\S]*$",
@@ -225,20 +292,29 @@ def parse_articles(rows, settings: Settings | None = None):
         try:
             articles.append(Article.model_validate(records[number]))
         except ValueError as exc:
-            errors.append(f"Article {number}: invalid required article fields ({type(exc).__name__})")
+            errors.append(
+                f"Article {number}: invalid required article fields ({type(exc).__name__})"
+            )
     errors.extend(validate_articles(articles, settings))
     for article in articles:
         if not article.text_en:
             warnings.append(f"No English text: {article.article_number}")
-    return articles, {"errors": errors, "warnings": warnings, "articles": diagnostics,
-                      "article_count": len(articles), "extractor_version": settings.extractor_version}
+    return articles, {
+        "errors": errors,
+        "warnings": warnings,
+        "articles": diagnostics,
+        "article_count": len(articles),
+        "extractor_version": settings.extractor_version,
+    }
 
 
 def validate_articles(articles, settings: Settings | None = None) -> list[str]:
     """Check article continuity, Arabic text, sane length, and repeal flags."""
     settings = settings or get_settings()
     errors: list[str] = []
-    article_numbers = [int(_record_value(article, "article_number")) for article in articles]
+    article_numbers = [
+        int(_record_value(article, "article_number")) for article in articles
+    ]
     found = set(article_numbers)
     expected = settings.expected_articles
     if len(article_numbers) != len(found) or found != expected:
@@ -251,7 +327,9 @@ def validate_articles(articles, settings: Settings | None = None) -> list[str]:
     for article in articles:
         number = int(_record_value(article, "article_number"))
         if number not in expected:
-            errors.append(f"Article number {number} is outside the configured corpus range")
+            errors.append(
+                f"Article number {number} is outside the configured corpus range"
+            )
         text_ar = _record_value(article, "text_ar")
         if not isinstance(text_ar, str) or not text_ar.strip():
             errors.append(f"Article {number} has empty Arabic text")
@@ -265,25 +343,36 @@ def validate_articles(articles, settings: Settings | None = None) -> list[str]:
                 f"Article {number} English text exceeds {settings.article_text_max_length} characters"
             )
         is_repealed = bool(_record_value(article, "is_repealed"))
-        should_be_repealed = any(lo <= number <= hi for lo, hi in settings.repeal_ranges)
+        should_be_repealed = any(
+            lo <= number <= hi for lo, hi in settings.repeal_ranges
+        )
         if is_repealed != should_be_repealed:
             expected_state = "repealed" if should_be_repealed else "active"
             errors.append(f"Article {number} should be flagged as {expected_state}")
         page = _record_value(article, "source_page")
         if page is not None and not 1 <= int(page) <= settings.pdf_page_count:
-            errors.append(f"Article {number} source page is outside the configured PDF page range")
+            errors.append(
+                f"Article {number} source page is outside the configured PDF page range"
+            )
     return errors
 
 
 def _record_value(article, field: str):
-    return article.get(field) if isinstance(article, dict) else getattr(article, field, None)
+    return (
+        article.get(field)
+        if isinstance(article, dict)
+        else getattr(article, field, None)
+    )
 
 
 def require_valid_corpus(articles, report, settings: Settings | None = None):
     settings = settings or get_settings()
     errors = report.get("errors", []) or validate_articles(articles, settings)
     if errors:
-        raise ValueError("Corpus validation failed; inspect extraction_report.json: " + "; ".join(errors[:8]))
+        raise ValueError(
+            "Corpus validation failed; inspect extraction_report.json: "
+            + "; ".join(errors[:8])
+        )
 
 
 def article_content(article: Article, language: Literal["ar", "en"]):
@@ -295,8 +384,14 @@ def article_content(article: Article, language: Literal["ar", "en"]):
     return article.text_en
 
 
-def article_metadata(article: Article, report, source_name: str, language: Literal["ar", "en"],
-                     chunk_id: str, chunk_position: int = 0):
+def article_metadata(
+    article: Article,
+    report,
+    source_name: str,
+    language: Literal["ar", "en"],
+    chunk_id: str,
+    chunk_position: int = 0,
+):
     diagnostics = report.get("articles", {}).get(article.article_number, {})
     metadata = article.model_dump(exclude={"text_ar", "text_en"})
     metadata["book"] = metadata.get("book") or source_name
@@ -312,30 +407,49 @@ def article_metadata(article: Article, report, source_name: str, language: Liter
     }
 
 
-def article_to_document(article: Article, report, source_hash, corpus_hash,
-                        source_name: str, language: Literal["ar", "en"], chunk_position: int = 0):
+def article_to_document(
+    article: Article,
+    report,
+    source_hash,
+    corpus_hash,
+    source_name: str,
+    language: Literal["ar", "en"],
+    chunk_position: int = 0,
+):
     content = article_content(article, language)
-    identity = stable_hash({
-        "corpus": corpus_hash,
-        "article": article.article_number,
-        "language": language,
-        "position": chunk_position,
-        "text": content,
-    })
+    identity = stable_hash(
+        {
+            "corpus": corpus_hash,
+            "article": article.article_number,
+            "language": language,
+            "position": chunk_position,
+            "text": content,
+        }
+    )
     chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
     return Document(
         page_content=content,
-        metadata=article_metadata(article, report, source_name, language, chunk_id, chunk_position),
+        metadata=article_metadata(
+            article, report, source_name, language, chunk_id, chunk_position
+        ),
     )
 
 
-def article_to_documents(article: Article, report, source_hash, corpus_hash,
-                         source_name: str, language: ArticleLanguage = "bilingual"):
+def article_to_documents(
+    article: Article,
+    report,
+    source_hash,
+    corpus_hash,
+    source_name: str,
+    language: ArticleLanguage = "bilingual",
+):
     languages = ("ar", "en") if language == "bilingual" else (language,)
     for selected_language in languages:
         if selected_language == "en" and not article.text_en:
             continue
-        yield article_to_document(article, report, source_hash, corpus_hash, source_name, selected_language)
+        yield article_to_document(
+            article, report, source_hash, corpus_hash, source_name, selected_language
+        )
 
 
 class EgyptianCivilCodeLoader(BaseLoader):
@@ -346,8 +460,13 @@ class EgyptianCivilCodeLoader(BaseLoader):
     valid canonical corpus.
     """
 
-    def __init__(self, pdf_path, output_dir, language: ArticleLanguage = "bilingual",
-                 settings: Settings | None = None):
+    def __init__(
+        self,
+        pdf_path,
+        output_dir,
+        language: ArticleLanguage = "bilingual",
+        settings: Settings | None = None,
+    ):
         self.pdf_path = Path(pdf_path)
         self.output_dir = Path(output_dir)
         self.language = language
@@ -358,7 +477,9 @@ class EgyptianCivilCodeLoader(BaseLoader):
         self.corpus_hash: str | None = None
 
     def load_articles(self):
-        articles, report = extract_to_json(self.pdf_path, self.output_dir, self.settings)
+        articles, report = extract_to_json(
+            self.pdf_path, self.output_dir, self.settings
+        )
         require_valid_corpus(articles, report, self.settings)
         self.articles = articles
         self.report = report
@@ -389,12 +510,20 @@ def extract_to_json(pdf_path, output_dir, settings: Settings | None = None):
     started = time.perf_counter()
     logger.info(
         "PDF corpus extraction started",
-        extra={"event": "rag.pdf.extraction.started", "operation": "ingest", "stage": "pdf_extraction"},
+        extra={
+            "event": "rag.pdf.extraction.started",
+            "operation": "ingest",
+            "stage": "pdf_extraction",
+        },
     )
     try:
         source_hash = file_hash(pdf_path)
         cache_path = output_dir / settings.extraction_rows_filename
-        cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
+        cache = (
+            json.loads(cache_path.read_text(encoding="utf-8"))
+            if cache_path.exists()
+            else {}
+        )
         cache_hit = (
             cache.get("source_hash") == source_hash
             and cache.get("extractor_version") == settings.extractor_version
@@ -407,26 +536,51 @@ def extract_to_json(pdf_path, output_dir, settings: Settings | None = None):
         report["source_hash"] = source_hash
         report["errors"] = layout_errors + report["errors"]
         report["valid"] = not report["errors"]
-        save_json(output_dir / settings.extraction_rows_filename, {"source_hash": source_hash,
-                  "extractor_version": settings.extractor_version, "rows": rows,
-                  "layout_errors": layout_errors})
-        save_json(output_dir / settings.article_candidates_filename, [a.model_dump() for a in articles])
+        save_json(
+            output_dir / settings.extraction_rows_filename,
+            {
+                "source_hash": source_hash,
+                "extractor_version": settings.extractor_version,
+                "rows": rows,
+                "layout_errors": layout_errors,
+            },
+        )
+        save_json(
+            output_dir / settings.article_candidates_filename,
+            [a.model_dump() for a in articles],
+        )
         save_json(output_dir / settings.extraction_report_filename, report)
         if report["valid"]:
             require_valid_corpus(articles, report, settings)
-            save_json(output_dir / settings.canonical_articles_filename, [a.model_dump() for a in articles])
-        save_json(output_dir / settings.validation_status_filename, {"valid": report["valid"],
-                  "source_hash": source_hash,
-                  "corpus_hash": stable_hash([a.model_dump() for a in articles]) if report["valid"] else None,
-                  "errors": report["errors"]})
+            save_json(
+                output_dir / settings.canonical_articles_filename,
+                [a.model_dump() for a in articles],
+            )
+        save_json(
+            output_dir / settings.validation_status_filename,
+            {
+                "valid": report["valid"],
+                "source_hash": source_hash,
+                "corpus_hash": stable_hash([a.model_dump() for a in articles])
+                if report["valid"]
+                else None,
+                "errors": report["errors"],
+            },
+        )
         log_method = logger.info if report["valid"] else logger.error
         log_method(
-            "PDF corpus extraction completed" if report["valid"] else "PDF corpus validation failed",
+            "PDF corpus extraction completed"
+            if report["valid"]
+            else "PDF corpus validation failed",
             extra={
-                "event": "rag.pdf.extraction.completed" if report["valid"] else "rag.pdf.extraction.invalid",
+                "event": "rag.pdf.extraction.completed"
+                if report["valid"]
+                else "rag.pdf.extraction.invalid",
                 "operation": "ingest",
                 "stage": "validation",
-                "corpus_version": stable_hash([a.model_dump() for a in articles]) if report["valid"] else None,
+                "corpus_version": stable_hash([a.model_dump() for a in articles])
+                if report["valid"]
+                else None,
                 "article_count": len(articles),
                 "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                 "cache_hit": cache_hit,
@@ -448,17 +602,29 @@ def extract_to_json(pdf_path, output_dir, settings: Settings | None = None):
         raise
 
 
-def load_validated_articles(output_dir, pdf_path=None, settings: Settings | None = None):
+def load_validated_articles(
+    output_dir, pdf_path=None, settings: Settings | None = None
+):
     """Read only a canonical corpus whose validation receipt matches its content."""
     output_dir = Path(output_dir)
     settings = settings or get_settings()
-    status = json.loads((output_dir / settings.validation_status_filename).read_text(encoding="utf-8"))
+    status = json.loads(
+        (output_dir / settings.validation_status_filename).read_text(encoding="utf-8")
+    )
     if not status.get("valid"):
-        raise ValueError("Corpus validation is incomplete; canonical articles are unavailable")
+        raise ValueError(
+            "Corpus validation is incomplete; canonical articles are unavailable"
+        )
     if pdf_path is not None and file_hash(pdf_path) != status.get("source_hash"):
         raise ValueError("Canonical corpus was generated from a different PDF")
-    articles = [Article.model_validate(row) for row in json.loads(
-        (output_dir / settings.canonical_articles_filename).read_text(encoding="utf-8"))]
+    articles = [
+        Article.model_validate(row)
+        for row in json.loads(
+            (output_dir / settings.canonical_articles_filename).read_text(
+                encoding="utf-8"
+            )
+        )
+    ]
     if stable_hash([a.model_dump() for a in articles]) != status.get("corpus_hash"):
         raise ValueError("Canonical corpus content differs from the validation receipt")
     require_valid_corpus(articles, {"errors": []}, settings)
@@ -466,9 +632,13 @@ def load_validated_articles(output_dir, pdf_path=None, settings: Settings | None
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Extract validated Egyptian Civil Code article JSON")
+    parser = argparse.ArgumentParser(
+        description="Extract validated Egyptian Civil Code article JSON"
+    )
     parser.add_argument("pdf_path", type=Path, help="Path to the bilingual source PDF")
-    parser.add_argument("output_dir", type=Path, help="Folder for candidate JSON and reports")
+    parser.add_argument(
+        "output_dir", type=Path, help="Folder for candidate JSON and reports"
+    )
     parser.add_argument(
         "--project-defaults",
         action="store_true",
@@ -476,9 +646,20 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     settings = Settings.model_construct() if args.project_defaults else None
-    articles, report = extract_to_json(args.pdf_path, args.output_dir, settings=settings)
-    print(json.dumps({"valid": report["valid"], "article_count": len(articles),
-                      "errors": report["errors"]}, ensure_ascii=False, indent=2))
+    articles, report = extract_to_json(
+        args.pdf_path, args.output_dir, settings=settings
+    )
+    print(
+        json.dumps(
+            {
+                "valid": report["valid"],
+                "article_count": len(articles),
+                "errors": report["errors"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0 if report["valid"] else 2
 
 

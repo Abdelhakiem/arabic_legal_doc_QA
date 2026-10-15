@@ -1,10 +1,12 @@
 import pytest
 
-from helpers.config import RegisteredRAGConfig, Settings
 from arabic_legal_qa.rag.orchestrator import create_rag
+from helpers.config import RegisteredRAGConfig, Settings
 
 
-def test_create_rag_applies_registry_config_to_live_pipeline(tmp_path, monkeypatch) -> None:
+def test_create_rag_applies_registry_config_to_live_pipeline(
+    tmp_path, monkeypatch
+) -> None:
     settings = Settings(_env_file=None, mlflow_tracking_uri="http://mlflow:5000")
     registered = RegisteredRAGConfig(
         chunk_tokens=384,
@@ -13,7 +15,9 @@ def test_create_rag_applies_registry_config_to_live_pipeline(tmp_path, monkeypat
         prefetch_k=32,
         min_evidence=2,
     )
-    monkeypatch.setattr("arabic_legal_qa.rag.orchestrator.get_settings", lambda *_args: settings)
+    monkeypatch.setattr(
+        "arabic_legal_qa.rag.orchestrator.get_settings", lambda *_args: settings
+    )
     monkeypatch.setattr(
         "helpers.mlflow_registry.load_registered_rag_config",
         lambda _settings: (registered, "arabic-legal-rag-config@champion#3"),
@@ -29,13 +33,17 @@ def test_create_rag_applies_registry_config_to_live_pipeline(tmp_path, monkeypat
     assert rag.registry_config_version == "arabic-legal-rag-config@champion#3"
 
 
-def test_required_registry_config_fails_startup_if_alias_unavailable(tmp_path, monkeypatch) -> None:
+def test_required_registry_config_fails_startup_if_alias_unavailable(
+    tmp_path, monkeypatch
+) -> None:
     settings = Settings(
         _env_file=None,
         mlflow_tracking_uri="http://mlflow:5000",
         mlflow_config_required=True,
     )
-    monkeypatch.setattr("arabic_legal_qa.rag.orchestrator.get_settings", lambda *_args: settings)
+    monkeypatch.setattr(
+        "arabic_legal_qa.rag.orchestrator.get_settings", lambda *_args: settings
+    )
     monkeypatch.setattr(
         "helpers.mlflow_registry.load_registered_rag_config",
         lambda _settings: None,

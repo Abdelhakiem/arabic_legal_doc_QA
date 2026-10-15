@@ -1,12 +1,11 @@
 """Build the reproducible DVC-managed Qdrant index from canonical articles."""
+
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
 
-from helpers.config import Settings
-from helpers.logging_config import configure_logging
 from arabic_legal_qa.rag.chunking import chunk_documents
 from arabic_legal_qa.rag.helper import stable_hash
 from arabic_legal_qa.rag.llms import load_embedding_bundle
@@ -15,6 +14,8 @@ from arabic_legal_qa.rag.pdf_loader import (
     load_validated_articles,
 )
 from arabic_legal_qa.rag.qdrant_db import build_index
+from helpers.config import Settings
+from helpers.logging_config import configure_logging
 
 
 def _resolve(root: Path, path: Path) -> Path:
@@ -29,16 +30,24 @@ def build_tracked_index(root: Path) -> dict:
     settings = Settings.model_construct()
     pdf_path = _resolve(root, settings.pdf_path)
     processed_dir = _resolve(root, settings.processed_dir)
-    articles = load_validated_articles(processed_dir, pdf_path=pdf_path, settings=settings)
+    articles = load_validated_articles(
+        processed_dir, pdf_path=pdf_path, settings=settings
+    )
 
     status = json.loads(
-        (processed_dir / settings.validation_status_filename).read_text(encoding="utf-8")
+        (processed_dir / settings.validation_status_filename).read_text(
+            encoding="utf-8"
+        )
     )
     report = json.loads(
-        (processed_dir / settings.extraction_report_filename).read_text(encoding="utf-8")
+        (processed_dir / settings.extraction_report_filename).read_text(
+            encoding="utf-8"
+        )
     )
     if report.get("source_hash") != status.get("source_hash"):
-        raise ValueError("Extraction report and validation receipt refer to different PDFs")
+        raise ValueError(
+            "Extraction report and validation receipt refer to different PDFs"
+        )
     # JSON object keys are strings; the article metadata helper looks them up by int.
     report["articles"] = {
         int(number): details for number, details in report.get("articles", {}).items()

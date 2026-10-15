@@ -4,17 +4,19 @@ Embedding models are expensive to initialize, so this module owns both local
 disk caching and process-level reuse. Indexing and retrieval should import the
 embedding bundle from here instead of constructing model objects themselves.
 """
+
 from __future__ import annotations
 
 import importlib.util
 import logging
+import time
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-import time
 
 import numpy as np
 from langchain_core.embeddings import Embeddings
+
 from helpers.config import EmbeddingConfig, LLMConfig, get_settings, model_cache_dir
 
 logger = logging.getLogger(__name__)
@@ -79,11 +81,15 @@ def resolve_llm_config(config: LLMConfig | None = None) -> LLMConfig:
             raise RuntimeError("Groq was selected but GROQ_TOKEN is not configured")
         if not _adapter_available("langchain_groq"):
             raise RuntimeError("Groq was selected but langchain-groq is not installed")
-        return replace(selected, provider="groq", model_name=groq_model, groq_token=groq_token)
+        return replace(
+            selected, provider="groq", model_name=groq_model, groq_token=groq_token
+        )
 
     if provider == "ollama":
         if not _adapter_available("langchain_ollama"):
-            raise RuntimeError("Ollama was selected but langchain-ollama is not installed")
+            raise RuntimeError(
+                "Ollama was selected but langchain-ollama is not installed"
+            )
         return replace(selected, provider="ollama", model_name=ollama_model)
 
     if provider in {"google", "gemini", "google_genai"}:
@@ -93,7 +99,9 @@ def resolve_llm_config(config: LLMConfig | None = None) -> LLMConfig:
             model_name=selected.model_name or selected.gemini_model,
         )
 
-    raise ValueError(f"Unsupported LLM_PROVIDER {provider!r}; use auto, groq, or ollama")
+    raise ValueError(
+        f"Unsupported LLM_PROVIDER {provider!r}; use auto, groq, or ollama"
+    )
 
 
 def load_llm(config: LLMConfig | None = None):
@@ -164,7 +172,9 @@ class PrefixedEmbeddings(Embeddings):
         self.passage_prefix = passage_prefix
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self.base.embed_documents([self._prefix(text, self.passage_prefix) for text in texts])
+        return self.base.embed_documents(
+            [self._prefix(text, self.passage_prefix) for text in texts]
+        )
 
     def embed_query(self, text: str) -> list[float]:
         return self.base.embed_query(self._prefix(text, self.query_prefix))
@@ -203,7 +213,10 @@ class OnnxEmbeddings(Embeddings):
         vectors: list[list[float]] = []
         for offset in range(0, len(texts), self.config.batch_size):
             batch = texts[offset : offset + self.config.batch_size]
-            encodings = [self.tokenizer.encode(text, add_special_tokens=True).ids for text in batch]
+            encodings = [
+                self.tokenizer.encode(text, add_special_tokens=True).ids
+                for text in batch
+            ]
             if any(not ids for ids in encodings):
                 raise ValueError("Embedding input cannot tokenize to an empty sequence")
             if any(len(ids) > self.config.embedding_limit for ids in encodings):
@@ -252,7 +265,9 @@ def default_model_cache_dir(project_root: Path | None = None) -> Path:
     return model_cache_dir(project_root)
 
 
-def load_embedding_bundle(config: EmbeddingConfig | None = None, cache_dir: Path | str | None = None) -> EmbeddingBundle:
+def load_embedding_bundle(
+    config: EmbeddingConfig | None = None, cache_dir: Path | str | None = None
+) -> EmbeddingBundle:
     """Load or reuse the embedding model and tokenizer.
 
     The first call downloads the ONNX encoder and tokenizer into
@@ -261,7 +276,9 @@ def load_embedding_bundle(config: EmbeddingConfig | None = None, cache_dir: Path
     """
 
     selected = config or get_settings().embedding_config()
-    selected_cache = Path(cache_dir) if cache_dir is not None else default_model_cache_dir()
+    selected_cache = (
+        Path(cache_dir) if cache_dir is not None else default_model_cache_dir()
+    )
     selected_cache.mkdir(parents=True, exist_ok=True)
     revision = selected.model_revision or _resolve_model_revision(selected.model_name)
     resolved = replace(selected, model_revision=revision)
@@ -275,7 +292,9 @@ def _resolve_model_revision(model_name: str) -> str:
 
 
 @lru_cache(maxsize=4)
-def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> EmbeddingBundle:
+def _load_embedding_bundle_cached(
+    config: EmbeddingConfig, cache_dir: Path
+) -> EmbeddingBundle:
     started = time.perf_counter()
     logger.info(
         "Embedding model initialization started",
@@ -291,31 +310,39 @@ def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> E
 
     onnx_relative_path = Path(config.onnx_model_filename)
     if onnx_relative_path.is_absolute() or ".." in onnx_relative_path.parts:
-        raise ValueError("ONNX model filename must be a relative path inside the model repository")
+        raise ValueError(
+            "ONNX model filename must be a relative path inside the model repository"
+        )
     artifact_subdir = onnx_relative_path.parent
-    model_dir = Path(snapshot_download(
-        repo_id=config.model_name,
-        revision=config.model_revision,
-        cache_dir=str(cache_dir),
-        allow_patterns=[
-            config.onnx_model_filename,
-            (artifact_subdir / "tokenizer.json").as_posix(),
-            (artifact_subdir / "config.json").as_posix(),
-        ],
-    ))
+    model_dir = Path(
+        snapshot_download(
+            repo_id=config.model_name,
+            revision=config.model_revision,
+            cache_dir=str(cache_dir),
+            allow_patterns=[
+                config.onnx_model_filename,
+                (artifact_subdir / "tokenizer.json").as_posix(),
+                (artifact_subdir / "config.json").as_posix(),
+            ],
+        )
+    )
     model_path = model_dir / config.onnx_model_filename
     tokenizer_path = model_dir / artifact_subdir / "tokenizer.json"
     model_config_path = model_dir / artifact_subdir / "config.json"
     for required_path in (model_path, tokenizer_path, model_config_path):
         if not required_path.is_file():
-            raise FileNotFoundError(f"Required ONNX embedding artifact is missing: {required_path}")
+            raise FileNotFoundError(
+                f"Required ONNX embedding artifact is missing: {required_path}"
+            )
 
     import json
 
     model_config = json.loads(model_config_path.read_text(encoding="utf-8"))
     model_limit = model_config.get("max_position_embeddings")
     if model_limit is not None and config.embedding_limit > model_limit:
-        raise ValueError("Configured embedding limit exceeds the tokenizer's supported input length")
+        raise ValueError(
+            "Configured embedding limit exceeds the tokenizer's supported input length"
+        )
     tokenizer = Tokenizer.from_file(str(tokenizer_path))
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     base_embedder = OnnxEmbeddings(session=session, tokenizer=tokenizer, config=config)
@@ -324,7 +351,9 @@ def _load_embedding_bundle_cached(config: EmbeddingConfig, cache_dir: Path) -> E
         query_prefix=config.query_prefix,
         passage_prefix=config.passage_prefix,
     )
-    bundle = EmbeddingBundle(embedder=embedder, tokenizer=tokenizer, config=config, cache_dir=cache_dir)
+    bundle = EmbeddingBundle(
+        embedder=embedder, tokenizer=tokenizer, config=config, cache_dir=cache_dir
+    )
     logger.info(
         "Embedding model initialized",
         extra={

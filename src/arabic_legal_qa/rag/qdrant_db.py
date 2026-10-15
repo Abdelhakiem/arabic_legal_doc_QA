@@ -1,15 +1,17 @@
 """Embedded Qdrant indexing and native dense+sparse retrieval."""
+
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from langchain_core.documents import Document
 
-from helpers.config import QdrantConfig, get_settings
 from arabic_legal_qa.rag.helper import save_json, stable_hash
+from helpers.config import QdrantConfig, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +53,21 @@ def _sparse_vector(encoded: Any):
 def _payload(document: Document) -> dict[str, Any]:
     return {
         "page_content": document.page_content,
-        **{key: value for key, value in document.metadata.items()
-           if isinstance(value, (str, int, float, bool)) or value is None},
+        **{
+            key: value
+            for key, value in document.metadata.items()
+            if isinstance(value, (str, int, float, bool)) or value is None
+        },
     }
 
 
-def _manifest(documents: list[Document], embedding_bundle: Any,
-              config: QdrantConfig, corpus_hash: str,
-              chunking_config: Any = None) -> dict[str, Any]:
+def _manifest(
+    documents: list[Document],
+    embedding_bundle: Any,
+    config: QdrantConfig,
+    corpus_hash: str,
+    chunking_config: Any = None,
+) -> dict[str, Any]:
     model_config = embedding_bundle.config
     return {
         "schema": 1,
@@ -75,16 +84,22 @@ def _manifest(documents: list[Document], embedding_bundle: Any,
         "sparse_model": config.sparse_model,
         "corpus_hash": corpus_hash,
         "chunk_count": len(documents),
-        "chunk_digest": stable_hash([
-            {"id": d.metadata.get("chunk_id"), "text": d.page_content}
-            for d in documents
-        ]),
+        "chunk_digest": stable_hash(
+            [
+                {"id": d.metadata.get("chunk_id"), "text": d.page_content}
+                for d in documents
+            ]
+        ),
     }
 
 
-def _build_index(documents: Iterable[Document], embedding_bundle: Any,
-                 config: QdrantConfig, corpus_hash: str,
-                 chunking_config: Any = None) -> dict[str, Any]:
+def _build_index(
+    documents: Iterable[Document],
+    embedding_bundle: Any,
+    config: QdrantConfig,
+    corpus_hash: str,
+    chunking_config: Any = None,
+) -> dict[str, Any]:
     """Replace the stable collection and upsert dense+sparse vectors."""
 
     from qdrant_client import QdrantClient, models
@@ -104,14 +119,16 @@ def _build_index(documents: Iterable[Document], embedding_bundle: Any,
     client.create_collection(
         collection_name=config.collection_name,
         vectors_config={"dense": dense_config},
-        sparse_vectors_config={"sparse": models.SparseVectorParams(
-            index=models.SparseIndexParams(on_disk=False),
-        )},
+        sparse_vectors_config={
+            "sparse": models.SparseVectorParams(
+                index=models.SparseIndexParams(on_disk=False),
+            )
+        },
     )
 
     sparse_encoder = _sparse_encoder(config.sparse_model, _sparse_cache_path(config))
     for offset in range(0, len(docs), config.batch_size):
-        batch = docs[offset:offset + config.batch_size]
+        batch = docs[offset : offset + config.batch_size]
         dense_vectors = embedding_bundle.embedder.embed_documents(
             [doc.page_content for doc in batch]
         )
@@ -123,16 +140,20 @@ def _build_index(documents: Iterable[Document], embedding_bundle: Any,
             chunk_id = document.metadata.get("chunk_id")
             if not chunk_id:
                 raise ValueError("Every document must contain a deterministic chunk_id")
-            points.append(models.PointStruct(
-                id=chunk_id,
-                vector={"dense": dense, "sparse": _sparse_vector(sparse)},
-                payload=_payload(document),
-            ))
+            points.append(
+                models.PointStruct(
+                    id=chunk_id,
+                    vector={"dense": dense, "sparse": _sparse_vector(sparse)},
+                    payload=_payload(document),
+                )
+            )
         client.upsert(collection_name=config.collection_name, points=points, wait=True)
 
     count = client.count(config.collection_name, exact=True).count
     if count != len(docs):
-        raise RuntimeError(f"Qdrant count mismatch: expected {len(docs)}, found {count}")
+        raise RuntimeError(
+            f"Qdrant count mismatch: expected {len(docs)}, found {count}"
+        )
     manifest = {
         **_manifest(docs, embedding_bundle, config, corpus_hash, chunking_config),
         "complete": True,
@@ -141,9 +162,13 @@ def _build_index(documents: Iterable[Document], embedding_bundle: Any,
     return {"client": client, "manifest": manifest, "count": count}
 
 
-def build_index(documents: Iterable[Document], embedding_bundle: Any,
-                config: QdrantConfig, corpus_hash: str,
-                chunking_config: Any = None) -> dict[str, Any]:
+def build_index(
+    documents: Iterable[Document],
+    embedding_bundle: Any,
+    config: QdrantConfig,
+    corpus_hash: str,
+    chunking_config: Any = None,
+) -> dict[str, Any]:
     """Build the collection and emit a single lifecycle event per run."""
 
     docs = list(documents)
@@ -162,7 +187,9 @@ def build_index(documents: Iterable[Document], embedding_bundle: Any,
         },
     )
     try:
-        result = _build_index(docs, embedding_bundle, config, corpus_hash, chunking_config)
+        result = _build_index(
+            docs, embedding_bundle, config, corpus_hash, chunking_config
+        )
     except Exception:
         logger.exception(
             "Qdrant indexing failed",
@@ -197,14 +224,21 @@ def open_index(config: QdrantConfig):
 
     client = QdrantClient(path=str(config.path))
     if not client.collection_exists(config.collection_name):
-        raise FileNotFoundError(f"Qdrant collection is missing: {config.collection_name}")
+        raise FileNotFoundError(
+            f"Qdrant collection is missing: {config.collection_name}"
+        )
     return client
 
 
-def hybrid_search(query: str, embedding_bundle: Any, client: Any,
-                  config: QdrantConfig, k: int | None = None,
-                  prefetch_k: int | None = None,
-                  query_filter: Any = None) -> list[Document]:
+def hybrid_search(
+    query: str,
+    embedding_bundle: Any,
+    client: Any,
+    config: QdrantConfig,
+    k: int | None = None,
+    prefetch_k: int | None = None,
+    query_filter: Any = None,
+) -> list[Document]:
     """Retrieve with Qdrant's native reciprocal-rank dense+sparse fusion."""
 
     from qdrant_client import models
@@ -214,15 +248,25 @@ def hybrid_search(query: str, embedding_bundle: Any, client: Any,
     prefetch_k = settings.prefetch_k if prefetch_k is None else prefetch_k
 
     dense = embedding_bundle.embedder.embed_query(query)
-    sparse = next(_sparse_encoder(config.sparse_model, _sparse_cache_path(config)).embed([query]))
+    sparse = next(
+        _sparse_encoder(config.sparse_model, _sparse_cache_path(config)).embed([query])
+    )
     response = client.query_points(
         collection_name=config.collection_name,
         prefetch=[
-            models.Prefetch(query=dense, using="dense", limit=prefetch_k,
-                            filter=query_filter,
-                            params=models.SearchParams(exact=config.exact_search)),
-            models.Prefetch(query=_sparse_vector(sparse), using="sparse", limit=prefetch_k,
-                            filter=query_filter),
+            models.Prefetch(
+                query=dense,
+                using="dense",
+                limit=prefetch_k,
+                filter=query_filter,
+                params=models.SearchParams(exact=config.exact_search),
+            ),
+            models.Prefetch(
+                query=_sparse_vector(sparse),
+                using="sparse",
+                limit=prefetch_k,
+                filter=query_filter,
+            ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         limit=k,
@@ -231,8 +275,10 @@ def hybrid_search(query: str, embedding_bundle: Any, client: Any,
     documents = []
     for point in response.points:
         payload = dict(point.payload or {})
-        documents.append(Document(
-            page_content=payload.pop("page_content", ""),
-            metadata=payload,
-        ))
+        documents.append(
+            Document(
+                page_content=payload.pop("page_content", ""),
+                metadata=payload,
+            )
+        )
     return documents
