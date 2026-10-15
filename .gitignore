@@ -13,7 +13,7 @@ __pycache__/
 !.env.example
 
 # Generated project artifacts; version data with DVC instead
-data/raw/*
+data/raw/?*
 !data/raw/.gitkeep
 !data/raw/.gitignore
 !data/raw/*.dvc
