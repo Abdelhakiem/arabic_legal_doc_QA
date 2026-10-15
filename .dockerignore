@@ -8,6 +8,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# Includes config.local; never send DVC credentials or cache to the builder.
+.dvc/
 notebooks/
 tests/
 reports/

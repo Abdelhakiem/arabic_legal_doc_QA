@@ -45,14 +45,19 @@ jobs:
           uv run --no-sync --group dvc dvc remote modify dagshub --local secret_access_key "$DAGSHUB_TOKEN"
 
       - name: Restore DVC-managed corpus and index
-        run: uv run --no-sync --group dvc dvc pull -r dagshub
+        run: |
+          # Restore pointer-tracked inputs explicitly, then restore pipeline outputs.
+          uv run --no-sync --group dvc dvc pull -r dagshub \
+            data/raw/egyptian_civil_law.pdf.dvc \
+            data/evaluation/foundation_questions.json.dvc
+          uv run --no-sync --group dvc dvc pull -r dagshub
 
       - name: Verify Docker build inputs are present
         run: |
           test -s data/raw/egyptian_civil_law.pdf
           test -s data/processed/articles.json
           test -s data/evaluation/foundation_questions.json
-          test -f data/vector_store/qdrant/manifest.json
+          test -s data/vector_store/qdrant/manifest.json
 
       - name: Lint
         run: uv run --no-sync --group lint ruff check src tests
@@ -108,14 +113,18 @@ jobs:
           uv run --no-sync --group dvc dvc remote modify dagshub --local secret_access_key "$DAGSHUB_TOKEN"
 
       - name: Restore DVC-managed corpus and index
-        run: uv run --no-sync --group dvc dvc pull -r dagshub
+        run: |
+          uv run --no-sync --group dvc dvc pull -r dagshub \
+            data/raw/egyptian_civil_law.pdf.dvc \
+            data/evaluation/foundation_questions.json.dvc
+          uv run --no-sync --group dvc dvc pull -r dagshub
 
       - name: Verify Docker build inputs are present
         run: |
           test -s data/raw/egyptian_civil_law.pdf
           test -s data/processed/articles.json
           test -s data/evaluation/foundation_questions.json
-          test -f data/vector_store/qdrant/manifest.json
+          test -s data/vector_store/qdrant/manifest.json
 
       - name: Verify Docker Hub credentials are configured
         env:
