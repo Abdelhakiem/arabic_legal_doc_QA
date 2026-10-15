@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from helpers.config import Settings, get_settings, project_root
 from arabic_legal_qa.rag.pdf_loader import validate_articles
+from helpers.config import Settings, get_settings, project_root
 
 
 @pytest.fixture(scope="module")
@@ -30,13 +30,21 @@ def corpus() -> tuple[list[dict], Settings]:
 def test_article_numbers_are_contiguous(corpus: tuple[list[dict], Settings]) -> None:
     records, settings = corpus
     article_numbers = [record["article_number"] for record in records]
-    expected = list(range(settings.expected_article_start, settings.expected_article_end + 1))
+    expected = list(
+        range(settings.expected_article_start, settings.expected_article_end + 1)
+    )
 
-    assert len(article_numbers) == len(set(article_numbers)), "Duplicate article numbers found"
-    assert sorted(article_numbers) == expected, "Canonical article numbers have gaps or unexpected values"
+    assert len(article_numbers) == len(set(article_numbers)), (
+        "Duplicate article numbers found"
+    )
+    assert sorted(article_numbers) == expected, (
+        "Canonical article numbers have gaps or unexpected values"
+    )
 
 
-def test_every_record_has_nonempty_arabic_text(corpus: tuple[list[dict], Settings]) -> None:
+def test_every_record_has_nonempty_arabic_text(
+    corpus: tuple[list[dict], Settings],
+) -> None:
     records, _ = corpus
     empty_articles = [
         record.get("article_number")
@@ -47,7 +55,9 @@ def test_every_record_has_nonempty_arabic_text(corpus: tuple[list[dict], Setting
     assert not empty_articles, f"Articles with empty Arabic text: {empty_articles}"
 
 
-def test_article_text_does_not_exceed_sane_length(corpus: tuple[list[dict], Settings]) -> None:
+def test_article_text_does_not_exceed_sane_length(
+    corpus: tuple[list[dict], Settings],
+) -> None:
     records, settings = corpus
     oversized = [
         (record.get("article_number"), field, len(record[field]))

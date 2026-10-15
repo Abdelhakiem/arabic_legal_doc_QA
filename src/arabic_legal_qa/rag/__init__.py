@@ -2,16 +2,16 @@
 
 __all__ = [
     "RAG",
-    "RAGConfig",
-    "create_rag",
-    "ingest",
-    "main",
     "Article",
     "EgyptianCivilCodeLoader",
+    "RAGConfig",
     "article_to_document",
     "article_to_documents",
+    "create_rag",
     "extract_to_json",
+    "ingest",
     "load_validated_articles",
+    "main",
 ]
 
 

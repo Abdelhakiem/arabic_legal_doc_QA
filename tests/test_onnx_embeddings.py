@@ -1,17 +1,18 @@
 """Small contract tests for direct ONNX Runtime embedding inference."""
-from types import SimpleNamespace
+
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from helpers.config import EmbeddingConfig
 from arabic_legal_qa.rag.chunking import token_count
 from arabic_legal_qa.rag.llms import (
     OnnxEmbeddings,
     PrefixedEmbeddings,
     _load_embedding_bundle_cached,
 )
+from helpers.config import EmbeddingConfig
 
 
 class FakeTokenizer:
@@ -79,7 +80,9 @@ def test_token_count_accepts_rust_tokenizers_encoding():
     assert token_count(FakeTokenizer(), "1 2 3") == 3
 
 
-def test_loader_downloads_onnx_artifacts_from_their_model_subdirectory(tmp_path, monkeypatch):
+def test_loader_downloads_onnx_artifacts_from_their_model_subdirectory(
+    tmp_path, monkeypatch
+):
     artifact_dir = tmp_path / "snapshot" / "onnx"
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "model.onnx").touch()
@@ -108,7 +111,11 @@ def test_loader_downloads_onnx_artifacts_from_their_model_subdirectory(tmp_path,
             return FakeSession()
 
     monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
-    monkeypatch.setitem(__import__("sys").modules, "tokenizers", SimpleNamespace(Tokenizer=FakeTokenizerLoader))
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "tokenizers",
+        SimpleNamespace(Tokenizer=FakeTokenizerLoader),
+    )
     monkeypatch.setitem(__import__("sys").modules, "onnxruntime", FakeOrt)
 
     bundle = _load_embedding_bundle_cached(

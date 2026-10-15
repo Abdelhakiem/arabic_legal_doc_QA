@@ -22,15 +22,23 @@ def _load_evaluation_data() -> tuple[list[dict], dict[int, dict]]:
     return questions, {row["article_number"]: row for row in article_records}
 
 
-def test_foundation_set_has_ten_unique_bilingual_questions_and_disjoint_splits() -> None:
+def test_foundation_set_has_ten_unique_bilingual_questions_and_disjoint_splits() -> (
+    None
+):
     questions, _articles = _load_evaluation_data()
 
     assert len(questions) == 10
     assert len({row["id"] for row in questions}) == 10
     assert Counter(row["language"] for row in questions) == {"en": 5, "ar": 5}
     assert Counter(row["split"] for row in questions) == {"dev": 6, "heldout": 4}
-    assert {row["language"] for row in questions if row["split"] == "dev"} == {"en", "ar"}
-    assert {row["language"] for row in questions if row["split"] == "heldout"} == {"en", "ar"}
+    assert {row["language"] for row in questions if row["split"] == "dev"} == {
+        "en",
+        "ar",
+    }
+    assert {row["language"] for row in questions if row["split"] == "heldout"} == {
+        "en",
+        "ar",
+    }
 
     groups_by_split = {
         split: {row["group"] for row in questions if row["split"] == split}
@@ -50,9 +58,13 @@ def test_expected_articles_exist_and_repeal_labels_match_canonical_articles() ->
 
         if question["repeal_case"]:
             assert expected, question["id"]
-            assert all(articles[number]["is_repealed"] for number in expected), question["id"]
+            assert all(articles[number]["is_repealed"] for number in expected), (
+                question["id"]
+            )
         else:
-            assert all(not articles[number]["is_repealed"] for number in expected), question["id"]
+            assert all(not articles[number]["is_repealed"] for number in expected), (
+                question["id"]
+            )
 
 
 def test_dataset_includes_multi_article_questions_and_out_of_scope_cases() -> None:

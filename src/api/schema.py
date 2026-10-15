@@ -1,11 +1,11 @@
 """Pydantic contracts for the HTTP API."""
+
 from __future__ import annotations
 
 import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 
 _ARTICLE_CITATION = re.compile(r"^Egyptian Civil Code, Article [1-9][0-9]*$")
 

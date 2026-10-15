@@ -1,15 +1,15 @@
 import pytest
 
-from helpers.config import Settings
 from arabic_legal_qa.evaluation.runner import (
     DEFAULT_CANDIDATES,
+    DEFAULT_MLFLOW_TRACKING_URI,
     _article_retrieval_metrics,
     _cache_read,
     _cache_write,
     _quick_questions,
-    DEFAULT_MLFLOW_TRACKING_URI,
     evaluate_candidates,
 )
+from helpers.config import Settings
 
 
 def test_default_experiment_sweep_has_six_chunk_overlap_and_k_candidates() -> None:
@@ -34,9 +34,12 @@ def test_article_retrieval_metrics_score_expected_article_recall_and_hit() -> No
 
 def test_quick_mode_selects_balanced_arabic_and_english_examples() -> None:
     rows = [
-        {"id": "ar1", "language": "ar"}, {"id": "en1", "language": "en"},
-        {"id": "ar2", "language": "ar"}, {"id": "en2", "language": "en"},
-        {"id": "ar3", "language": "ar"}, {"id": "en3", "language": "en"},
+        {"id": "ar1", "language": "ar"},
+        {"id": "en1", "language": "en"},
+        {"id": "ar2", "language": "ar"},
+        {"id": "en2", "language": "en"},
+        {"id": "ar3", "language": "ar"},
+        {"id": "en3", "language": "en"},
     ]
 
     selected = _quick_questions(rows)
@@ -54,9 +57,13 @@ def test_evaluation_stage_cache_round_trips_json(tmp_path) -> None:
     assert _cache_read(cache_file) == expected
 
 
-def test_heldout_split_cannot_be_used_for_a_configuration_sweep(tmp_path, monkeypatch) -> None:
+def test_heldout_split_cannot_be_used_for_a_configuration_sweep(
+    tmp_path, monkeypatch
+) -> None:
     settings = Settings(_env_file=None, mlflow_tracking_uri="http://localhost:5000")
-    monkeypatch.setattr("arabic_legal_qa.evaluation.runner.get_settings", lambda *_args: settings)
+    monkeypatch.setattr(
+        "arabic_legal_qa.evaluation.runner.get_settings", lambda *_args: settings
+    )
 
     with pytest.raises(ValueError, match="validate-champion"):
         evaluate_candidates(root=tmp_path, split="heldout")

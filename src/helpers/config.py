@@ -4,6 +4,7 @@ All application defaults and environment-backed settings live here. Feature
 modules consume the typed configs below rather than reading ``.env`` or
 defining their own configuration classes.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -12,7 +13,6 @@ from pathlib import Path
 
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 # Fixed source-edition contract and extraction geometry.
 DEFAULT_EXTRACTOR_VERSION = "geometry-glyphs-v1"
@@ -74,7 +74,9 @@ DEFAULT_MLFLOW_MIN_FAITHFULNESS = 0.75
 
 # Backward-compatible constants for existing parser consumers.
 EXTRACTOR_VERSION = DEFAULT_EXTRACTOR_VERSION
-EXPECTED_ARTICLES = set(range(DEFAULT_EXPECTED_ARTICLE_START, DEFAULT_EXPECTED_ARTICLE_END + 1))
+EXPECTED_ARTICLES = set(
+    range(DEFAULT_EXPECTED_ARTICLE_START, DEFAULT_EXPECTED_ARTICLE_END + 1)
+)
 REPEAL_RANGES = DEFAULT_REPEAL_RANGES
 
 
@@ -195,7 +197,9 @@ class RegisteredRAGConfig:
         if self.chunk_tokens <= 0:
             raise ValueError("chunk_tokens must be positive")
         if self.chunk_overlap < 0 or self.chunk_overlap >= self.chunk_tokens:
-            raise ValueError("chunk_overlap must be nonnegative and smaller than chunk_tokens")
+            raise ValueError(
+                "chunk_overlap must be nonnegative and smaller than chunk_tokens"
+            )
         if self.retrieval_k <= 0 or self.prefetch_k < self.retrieval_k:
             raise ValueError("Require retrieval_k > 0 and prefetch_k >= retrieval_k")
         if self.min_evidence < 0:
@@ -329,7 +333,9 @@ class Settings(BaseSettings):
         )
 
     def qdrant_config(self, root: Path | None = None) -> QdrantConfig:
-        selected_root = project_root(root) if root is None else Path(root).expanduser().resolve()
+        selected_root = (
+            project_root(root) if root is None else Path(root).expanduser().resolve()
+        )
         path = self.qdrant_path.expanduser()
         if not path.is_absolute():
             path = selected_root / path
@@ -344,7 +350,9 @@ class Settings(BaseSettings):
         )
 
     def rag_config(self, root: Path | None = None) -> RAGConfig:
-        selected_root = project_root(root) if root is None else Path(root).expanduser().resolve()
+        selected_root = (
+            project_root(root) if root is None else Path(root).expanduser().resolve()
+        )
         return RAGConfig(
             root=selected_root,
             pdf_path=self.pdf_path,
@@ -376,7 +384,9 @@ def project_root(start: Path | None = None) -> Path:
     for candidate in (current, *current.parents):
         if (candidate / "pyproject.toml").exists() and (candidate / "data").exists():
             return candidate
-    raise RuntimeError("Could not find project root containing pyproject.toml and data/")
+    raise RuntimeError(
+        "Could not find project root containing pyproject.toml and data/"
+    )
 
 
 def model_cache_dir(root: Path | None = None) -> Path:
@@ -407,17 +417,17 @@ def get_settings(env_file: str | Path | None = None) -> Settings:
 
 
 __all__ = [
-    "Settings",
-    "get_settings",
-    "project_root",
-    "model_cache_dir",
+    "EXPECTED_ARTICLES",
+    "EXTRACTOR_VERSION",
+    "REPEAL_RANGES",
+    "ChunkingConfig",
     "EmbeddingConfig",
     "LLMConfig",
-    "ChunkingConfig",
     "QdrantConfig",
     "RAGConfig",
     "RegisteredRAGConfig",
-    "EXTRACTOR_VERSION",
-    "EXPECTED_ARTICLES",
-    "REPEAL_RANGES",
+    "Settings",
+    "get_settings",
+    "model_cache_dir",
+    "project_root",
 ]

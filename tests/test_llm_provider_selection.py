@@ -27,7 +27,9 @@ def test_auto_prefers_groq_when_token_and_adapter_are_available(monkeypatch):
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("GROQ_TOKEN", "test-secret")
     monkeypatch.setenv("QROQ_MODEL", "test/groq-model")
-    monkeypatch.setattr(llms, "_adapter_available", lambda name: name == "langchain_groq")
+    monkeypatch.setattr(
+        llms, "_adapter_available", lambda name: name == "langchain_groq"
+    )
 
     config = llms.resolve_llm_config()
 
@@ -40,7 +42,9 @@ def test_auto_prefers_groq_when_token_and_adapter_are_available(monkeypatch):
 def test_auto_falls_back_to_ollama_without_groq_token(monkeypatch):
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("OLLAMA_MODEL", "test/local-model")
-    monkeypatch.setattr(llms, "_adapter_available", lambda name: name == "langchain_ollama")
+    monkeypatch.setattr(
+        llms, "_adapter_available", lambda name: name == "langchain_ollama"
+    )
 
     config = llms.resolve_llm_config()
 
@@ -52,7 +56,9 @@ def test_auto_falls_back_to_ollama_when_groq_adapter_is_unavailable(monkeypatch)
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("GROQ_TOKEN", "test-secret")
     monkeypatch.setenv("OLLAMA_MODEL", "test/local-model")
-    monkeypatch.setattr(llms, "_adapter_available", lambda name: name == "langchain_ollama")
+    monkeypatch.setattr(
+        llms, "_adapter_available", lambda name: name == "langchain_ollama"
+    )
 
     config = llms.resolve_llm_config()
 

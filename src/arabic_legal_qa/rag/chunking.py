@@ -4,24 +4,28 @@ This module starts with the same chunking contract used by the reference
 notebook: split with the embedding tokenizer, preserve every original
 character, and keep article metadata attached to each LangChain document.
 """
+
 from __future__ import annotations
 
-import re
 import logging
+import re
 import time
 import uuid
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from langchain_core.documents import Document
 
-from helpers.config import ChunkingConfig, EmbeddingConfig
 from arabic_legal_qa.rag.llms import EmbeddingBundle, load_embedding_bundle
 from arabic_legal_qa.rag.pdf_loader import Article, stable_hash
+from helpers.config import ChunkingConfig, EmbeddingConfig
 
 logger = logging.getLogger(__name__)
 
 
-def load_embedder(config: EmbeddingConfig | None = None, cache_dir: str | None = None) -> EmbeddingBundle:
+def load_embedder(
+    config: EmbeddingConfig | None = None, cache_dir: str | None = None
+) -> EmbeddingBundle:
     """Return the shared embedding bundle managed by `rag.llms`."""
 
     return load_embedding_bundle(config=config, cache_dir=cache_dir)
@@ -122,7 +126,9 @@ def split_text(text: str, tokenizer: Any, limit: int, overlap: int = 0) -> list[
                     else:
                         hi = mid - 1
                 if not best:
-                    raise ValueError("Token budget cannot accommodate a single character")
+                    raise ValueError(
+                        "Token budget cannot accommodate a single character"
+                    )
                 units.append(remaining[:best])
                 remaining = remaining[best:]
             if remaining:
@@ -149,21 +155,33 @@ def _chunk_limit(config: ChunkingConfig) -> int:
     return min(config.chunk_tokens or config.embedding_limit, config.embedding_limit)
 
 
-def _chunk_id(corpus_hash: str, article_number: int, language: str, position: int,
-              text: str, limit: int) -> str:
-    identity = stable_hash({
-        "corpus": corpus_hash,
-        "article": article_number,
-        "language": language,
-        "position": position,
-        "text": text,
-        "limit": limit,
-    })
+def _chunk_id(
+    corpus_hash: str,
+    article_number: int,
+    language: str,
+    position: int,
+    text: str,
+    limit: int,
+) -> str:
+    identity = stable_hash(
+        {
+            "corpus": corpus_hash,
+            "article": article_number,
+            "language": language,
+            "position": position,
+            "text": text,
+            "limit": limit,
+        }
+    )
     return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
 
 
-def chunk_documents(documents: Iterable[Document], tokenizer: Any, config: ChunkingConfig,
-                    corpus_hash: str) -> list[Document]:
+def chunk_documents(
+    documents: Iterable[Document],
+    tokenizer: Any,
+    config: ChunkingConfig,
+    corpus_hash: str,
+) -> list[Document]:
     """Split LangChain documents while preserving article metadata."""
 
     started = time.perf_counter()
@@ -187,13 +205,25 @@ def chunk_documents(documents: Iterable[Document], tokenizer: Any, config: Chunk
             for position, text in enumerate(
                 split_text(document.page_content, tokenizer, limit, config.overlap)
             ):
-                chunks.append(Document(page_content=text, metadata={
-                    **metadata,
-                    "chunk_id": _chunk_id(corpus_hash, article_number, language, position, text, limit),
-                    "chunk_position": position,
-                    "token_count": token_count(tokenizer, text),
-                    "corpus_hash": corpus_hash,
-                }))
+                chunks.append(
+                    Document(
+                        page_content=text,
+                        metadata={
+                            **metadata,
+                            "chunk_id": _chunk_id(
+                                corpus_hash,
+                                article_number,
+                                language,
+                                position,
+                                text,
+                                limit,
+                            ),
+                            "chunk_position": position,
+                            "token_count": token_count(tokenizer, text),
+                            "corpus_hash": corpus_hash,
+                        },
+                    )
+                )
     except Exception:
         logger.exception(
             "Article chunking failed",
@@ -221,8 +251,13 @@ def chunk_documents(documents: Iterable[Document], tokenizer: Any, config: Chunk
     return chunks
 
 
-def make_chunks(articles: Iterable[Article], tokenizer: Any, config: ChunkingConfig,
-                corpus_hash: str, document_factory: Callable[..., Document] = Document) -> list[Document]:
+def make_chunks(
+    articles: Iterable[Article],
+    tokenizer: Any,
+    config: ChunkingConfig,
+    corpus_hash: str,
+    document_factory: Callable[..., Document] = Document,
+) -> list[Document]:
     """Create language-specific chunks from validated article records.
 
     This mirrors the reference notebook: Arabic and English are chunked
@@ -237,13 +272,27 @@ def make_chunks(articles: Iterable[Article], tokenizer: Any, config: ChunkingCon
         for language, text in (("ar", article.text_ar), ("en", article.text_en)):
             if not text:
                 continue
-            for position, chunk in enumerate(split_text(text, tokenizer, limit, config.overlap)):
-                documents.append(document_factory(page_content=chunk, metadata={
-                    **metadata,
-                    "language": language,
-                    "chunk_id": _chunk_id(corpus_hash, article.article_number, language, position, chunk, limit),
-                    "chunk_position": position,
-                    "token_count": token_count(tokenizer, chunk),
-                    "corpus_hash": corpus_hash,
-                }))
+            for position, chunk in enumerate(
+                split_text(text, tokenizer, limit, config.overlap)
+            ):
+                documents.append(
+                    document_factory(
+                        page_content=chunk,
+                        metadata={
+                            **metadata,
+                            "language": language,
+                            "chunk_id": _chunk_id(
+                                corpus_hash,
+                                article.article_number,
+                                language,
+                                position,
+                                chunk,
+                                limit,
+                            ),
+                            "chunk_position": position,
+                            "token_count": token_count(tokenizer, chunk),
+                            "corpus_hash": corpus_hash,
+                        },
+                    )
+                )
     return documents

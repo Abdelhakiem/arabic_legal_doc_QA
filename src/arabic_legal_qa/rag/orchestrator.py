@@ -4,6 +4,7 @@ The notebook is an executable experiment; this module is the reusable
 pipeline boundary. It keeps the same validated loader, E5-small embedding
 contract, article-aware chunking, and local Qdrant hybrid index.
 """
+
 from __future__ import annotations
 
 import logging
@@ -15,15 +16,7 @@ from typing import Any
 
 from langchain_core.documents import Document
 
-from helpers.config import (
-    ChunkingConfig,
-    EmbeddingConfig,
-    LLMConfig,
-    QdrantConfig,
-    RAGConfig,
-    get_settings,
-    project_root,
-)
+from arabic_legal_qa.rag.chunking import chunk_documents
 from arabic_legal_qa.rag.helper import stable_hash
 from arabic_legal_qa.rag.llms import (
     EmbeddingBundle,
@@ -38,7 +31,14 @@ from arabic_legal_qa.rag.qdrant_db import (
     open_index,
     prepare_retrieval,
 )
-from arabic_legal_qa.rag.chunking import chunk_documents
+from helpers.config import (
+    EmbeddingConfig,
+    LLMConfig,
+    QdrantConfig,
+    RAGConfig,
+    get_settings,
+    project_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,9 @@ class RAG:
     """Own ingestion state and provide retrieval from the persisted index."""
 
     config: RAGConfig
-    embedding_config: EmbeddingConfig = field(default_factory=lambda: get_settings().embedding_config())
+    embedding_config: EmbeddingConfig = field(
+        default_factory=lambda: get_settings().embedding_config()
+    )
     llm_config: LLMConfig = field(default_factory=lambda: get_settings().llm_config())
     embedding_bundle: EmbeddingBundle | None = field(default=None, init=False)
     llm: Any | None = field(default=None, init=False)
@@ -208,14 +210,19 @@ class RAG:
                 return False
             if manifest.get("embedding_revision") != active_embedding.model_revision:
                 return False
-            if manifest.get("onnx_model_filename") != active_embedding.onnx_model_filename:
+            if (
+                manifest.get("onnx_model_filename")
+                != active_embedding.onnx_model_filename
+            ):
                 return False
             if manifest.get("chunk_tokens") != self.config.chunk_tokens:
                 return False
             if manifest.get("chunk_overlap") != self.config.chunk_overlap:
                 return False
             client = open_index(self._qdrant_config())
-            count = client.count(self._qdrant_config().collection_name, exact=True).count
+            count = client.count(
+                self._qdrant_config().collection_name, exact=True
+            ).count
             if count != manifest.get("chunk_count"):
                 client.close()
                 return False
@@ -268,8 +275,9 @@ class RAG:
             raise RuntimeError("The Qdrant collection is empty")
         return indexed
 
-    def retrieve(self, question: str, k: int | None = None,
-                 prefetch_k: int | None = None) -> list[Document]:
+    def retrieve(
+        self, question: str, k: int | None = None, prefetch_k: int | None = None
+    ) -> list[Document]:
         """Run native dense+sparse hybrid retrieval for one question."""
 
         if not question.strip():
@@ -295,21 +303,32 @@ class RAG:
             if key in seen:
                 continue
             seen.add(key)
-            references.append({
-                "article_number": metadata.get("article_number"),
-                "language": metadata.get("language"),
-                "citation": metadata.get("citation"),
-                "source_page": metadata.get("source_page"),
-                "is_repealed": metadata.get("is_repealed", False),
-            })
+            references.append(
+                {
+                    "article_number": metadata.get("article_number"),
+                    "language": metadata.get("language"),
+                    "citation": metadata.get("citation"),
+                    "source_page": metadata.get("source_page"),
+                    "is_repealed": metadata.get("is_repealed", False),
+                }
+            )
         return references
 
-    def query(self, question: str, k: int | None = None, prefetch_k: int | None = None,
-              min_evidence: int | None = None, *, include_trace: bool = False) -> dict[str, Any]:
+    def query(
+        self,
+        question: str,
+        k: int | None = None,
+        prefetch_k: int | None = None,
+        min_evidence: int | None = None,
+        *,
+        include_trace: bool = False,
+    ) -> dict[str, Any]:
         """Retrieve using the user's question verbatim and answer with evidence."""
         k = self.config.retrieval_k if k is None else k
         prefetch_k = self.config.prefetch_k if prefetch_k is None else prefetch_k
-        min_evidence = self.config.min_evidence if min_evidence is None else min_evidence
+        min_evidence = (
+            self.config.min_evidence if min_evidence is None else min_evidence
+        )
         started = time.perf_counter()
         logger.info(
             "RAG query started",
@@ -349,9 +368,15 @@ class RAG:
                         "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                     },
                 )
-                result = {"answer": answer, "references": references, "evidence_count": 0}
+                result = {
+                    "answer": answer,
+                    "references": references,
+                    "evidence_count": 0,
+                }
                 if include_trace:
-                    result["retrieved_contexts"] = [doc.page_content for doc in documents]
+                    result["retrieved_contexts"] = [
+                        doc.page_content for doc in documents
+                    ]
                     result["retrieved_article_numbers"] = [
                         doc.metadata.get("article_number") for doc in documents
                     ]
@@ -442,7 +467,9 @@ def create_rag(root: Path | str | None = None) -> RAG:
             )
             resolved = None
         if resolved is None and settings.mlflow_config_required:
-            raise RuntimeError("MLflow config is required but no registry alias was resolved")
+            raise RuntimeError(
+                "MLflow config is required but no registry alias was resolved"
+            )
         if resolved is not None:
             registered, identity = resolved
             rag_config = replace(
@@ -460,7 +487,10 @@ def create_rag(root: Path | str | None = None) -> RAG:
             )
             logger.info(
                 "Applying registered RAG configuration",
-                extra={"event": "mlflow.registry.config_applied", "model_version": identity},
+                extra={
+                    "event": "mlflow.registry.config_applied",
+                    "model_version": identity,
+                },
             )
             rag = RAG(rag_config, embedding_config, settings.llm_config())
             rag.registry_config_version = identity
@@ -478,4 +508,4 @@ def ingest(root: Path | str | None = None) -> dict[str, Any]:
         orchestrator.close()
 
 
-__all__ = ["RAGConfig", "RAG", "create_rag", "ingest"]
+__all__ = ["RAG", "RAGConfig", "create_rag", "ingest"]

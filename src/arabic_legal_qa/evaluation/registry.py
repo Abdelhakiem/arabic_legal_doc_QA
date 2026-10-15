@@ -1,4 +1,5 @@
 """Register and promote a tested RAG configuration in MLflow."""
+
 from __future__ import annotations
 
 import logging
@@ -53,7 +54,9 @@ def register_logged_rag_config(
         CONFIG_TAG,
         config_to_json(config),
     )
-    client.set_model_version_tag(model_name, model_version.version, "source_run_id", run_id)
+    client.set_model_version_tag(
+        model_name, model_version.version, "source_run_id", run_id
+    )
     if alias:
         client.set_registered_model_alias(model_name, alias, model_version.version)
     logger.info(

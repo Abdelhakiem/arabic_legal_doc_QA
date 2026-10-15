@@ -1,4 +1,5 @@
 """FastAPI application for grounded Egyptian Civil Code Q&A."""
+
 from __future__ import annotations
 
 import logging
@@ -9,10 +10,10 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from api.schema import AskRequest, AskResponse, HealthResponse, is_article_citation
+from arabic_legal_qa.rag.orchestrator import RAG, create_rag
 from helpers.config import get_settings
 from helpers.logging_config import configure_logging
-from arabic_legal_qa.rag.orchestrator import RAG, create_rag
-from api.schema import AskRequest, AskResponse, HealthResponse, is_article_citation
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,10 @@ def get_rag(request: Request) -> RAG:
     if not request.app.state.ready or request.app.state.rag is None:
         raise HTTPException(
             status_code=503,
-            detail={"errors": request.app.state.startup_errors or ["RAG service is not ready"]},
+            detail={
+                "errors": request.app.state.startup_errors
+                or ["RAG service is not ready"]
+            },
         )
     return request.app.state.rag
 
@@ -35,7 +39,11 @@ def _source_citations(result: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
     for reference in result.get("references", []):
         citation = reference.get("citation")
-        if isinstance(citation, str) and is_article_citation(citation) and citation not in seen:
+        if (
+            isinstance(citation, str)
+            and is_article_citation(citation)
+            and citation not in seen
+        ):
             seen.add(citation)
             citations.append(citation)
     return citations
@@ -106,7 +114,8 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
                 content=HealthResponse(
                     status="unhealthy",
                     documents_indexed=0,
-                    errors=request.app.state.startup_errors or ["RAG service is not ready"],
+                    errors=request.app.state.startup_errors
+                    or ["RAG service is not ready"],
                 ).model_dump(exclude_none=True),
             )
         try:

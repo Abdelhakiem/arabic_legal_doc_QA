@@ -1,4 +1,5 @@
 """Read the approved RAG configuration from MLflow Model Registry."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,9 @@ logger = logging.getLogger(__name__)
 CONFIG_TAG = "rag_config_json"
 
 
-def load_registered_rag_config(settings: Settings) -> tuple[RegisteredRAGConfig, str] | None:
+def load_registered_rag_config(
+    settings: Settings,
+) -> tuple[RegisteredRAGConfig, str] | None:
     """Resolve the configured model alias; return ``None`` when registry is off.
 
     The model version carries the validated config in a tag, so serving does

@@ -5,11 +5,17 @@ import types
 import pytest
 
 from helpers.config import RegisteredRAGConfig, Settings
-from helpers.mlflow_registry import CONFIG_TAG, config_to_json, load_registered_rag_config
+from helpers.mlflow_registry import (
+    CONFIG_TAG,
+    config_to_json,
+    load_registered_rag_config,
+)
 
 
 def test_registered_config_round_trips_as_stable_json() -> None:
-    config = RegisteredRAGConfig(chunk_tokens=384, chunk_overlap=32, retrieval_k=5, prefetch_k=24)
+    config = RegisteredRAGConfig(
+        chunk_tokens=384, chunk_overlap=32, retrieval_k=5, prefetch_k=24
+    )
 
     assert json.loads(config_to_json(config)) == {
         "chunk_tokens": 384,
@@ -44,7 +50,9 @@ def test_registry_alias_loads_version_tag(monkeypatch: pytest.MonkeyPatch) -> No
 
         def get_model_version_by_alias(self, name, alias):
             assert (name, alias) == ("arabic-legal-rag-config", "champion")
-            return types.SimpleNamespace(version="7", tags={CONFIG_TAG: config_to_json(expected)})
+            return types.SimpleNamespace(
+                version="7", tags={CONFIG_TAG: config_to_json(expected)}
+            )
 
     mlflow_module = types.ModuleType("mlflow")
     mlflow_module.__path__ = []
