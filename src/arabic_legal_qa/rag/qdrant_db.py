@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 _SPARSE_ENCODERS: dict[tuple[str, str | None], Any] = {}
 
 
+def _sparse_cache_path(config: QdrantConfig) -> Path:
+    return config.sparse_cache_path or config.path / "sparse_cache"
+
+
 def _sparse_encoder(model_name: str, cache_dir: Path | None = None):
     from fastembed import SparseTextEmbedding
 
@@ -32,7 +36,7 @@ def _sparse_encoder(model_name: str, cache_dir: Path | None = None):
 def prepare_retrieval(config: QdrantConfig) -> None:
     """Load the sparse encoder needed by hybrid search during service startup."""
 
-    _sparse_encoder(config.sparse_model, config.path / "sparse_cache")
+    _sparse_encoder(config.sparse_model, _sparse_cache_path(config))
 
 
 def _sparse_vector(encoded: Any):
@@ -53,7 +57,8 @@ def _payload(document: Document) -> dict[str, Any]:
 
 
 def _manifest(documents: list[Document], embedding_bundle: Any,
-              config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
+              config: QdrantConfig, corpus_hash: str,
+              chunking_config: Any = None) -> dict[str, Any]:
     model_config = embedding_bundle.config
     return {
         "schema": 1,
@@ -62,6 +67,8 @@ def _manifest(documents: list[Document], embedding_bundle: Any,
         "onnx_model_filename": model_config.onnx_model_filename,
         "embedding_model": model_config.model_name,
         "embedding_revision": model_config.model_revision,
+        "chunk_tokens": getattr(chunking_config, "chunk_tokens", None),
+        "chunk_overlap": getattr(chunking_config, "overlap", None),
         "vector_size": config.vector_size,
         "distance": "cosine",
         "exact_search": config.exact_search,
@@ -76,7 +83,8 @@ def _manifest(documents: list[Document], embedding_bundle: Any,
 
 
 def _build_index(documents: Iterable[Document], embedding_bundle: Any,
-                 config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
+                 config: QdrantConfig, corpus_hash: str,
+                 chunking_config: Any = None) -> dict[str, Any]:
     """Replace the stable collection and upsert dense+sparse vectors."""
 
     from qdrant_client import QdrantClient, models
@@ -101,7 +109,7 @@ def _build_index(documents: Iterable[Document], embedding_bundle: Any,
         )},
     )
 
-    sparse_encoder = _sparse_encoder(config.sparse_model, config.path / "sparse_cache")
+    sparse_encoder = _sparse_encoder(config.sparse_model, _sparse_cache_path(config))
     for offset in range(0, len(docs), config.batch_size):
         batch = docs[offset:offset + config.batch_size]
         dense_vectors = embedding_bundle.embedder.embed_documents(
@@ -125,13 +133,17 @@ def _build_index(documents: Iterable[Document], embedding_bundle: Any,
     count = client.count(config.collection_name, exact=True).count
     if count != len(docs):
         raise RuntimeError(f"Qdrant count mismatch: expected {len(docs)}, found {count}")
-    manifest = {**_manifest(docs, embedding_bundle, config, corpus_hash), "complete": True}
+    manifest = {
+        **_manifest(docs, embedding_bundle, config, corpus_hash, chunking_config),
+        "complete": True,
+    }
     save_json(config.path / config.manifest_name, manifest)
     return {"client": client, "manifest": manifest, "count": count}
 
 
 def build_index(documents: Iterable[Document], embedding_bundle: Any,
-                config: QdrantConfig, corpus_hash: str) -> dict[str, Any]:
+                config: QdrantConfig, corpus_hash: str,
+                chunking_config: Any = None) -> dict[str, Any]:
     """Build the collection and emit a single lifecycle event per run."""
 
     docs = list(documents)
@@ -150,7 +162,7 @@ def build_index(documents: Iterable[Document], embedding_bundle: Any,
         },
     )
     try:
-        result = _build_index(docs, embedding_bundle, config, corpus_hash)
+        result = _build_index(docs, embedding_bundle, config, corpus_hash, chunking_config)
     except Exception:
         logger.exception(
             "Qdrant indexing failed",
@@ -202,7 +214,7 @@ def hybrid_search(query: str, embedding_bundle: Any, client: Any,
     prefetch_k = settings.prefetch_k if prefetch_k is None else prefetch_k
 
     dense = embedding_bundle.embedder.embed_query(query)
-    sparse = next(_sparse_encoder(config.sparse_model, config.path / "sparse_cache").embed([query]))
+    sparse = next(_sparse_encoder(config.sparse_model, _sparse_cache_path(config)).embed([query]))
     response = client.query_points(
         collection_name=config.collection_name,
         prefetch=[

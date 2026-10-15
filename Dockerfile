@@ -15,7 +15,8 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
 RUN groupadd --gid 10001 appuser \
     && useradd --uid 10001 --gid appuser --create-home appuser \
     && mkdir -p /app/data/model_cache \
-    && chown appuser:appuser /app/data/model_cache
+    && mkdir -p /mlflow \
+    && chown appuser:appuser /app/data/model_cache /mlflow
 
 # Install runtime dependencies first so source edits do not invalidate this layer.
 COPY pyproject.toml uv.lock ./

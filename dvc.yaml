@@ -1,0 +1,35 @@
+stages:
+  build-corpus:
+    cmd: uv run python -m arabic_legal_qa.rag.pdf_loader data/raw/egyptian_civil_law.pdf data/processed --project-defaults
+    deps:
+      - data/raw/egyptian_civil_law.pdf
+      - pyproject.toml
+      - uv.lock
+      - src/arabic_legal_qa/rag/helper.py
+      - src/arabic_legal_qa/rag/pdf_loader.py
+      - src/helpers/config.py
+    outs:
+      - data/processed/extraction_rows.json
+      - data/processed/article_candidates.json
+      - data/processed/extraction_report.json
+      - data/processed/validation_status.json
+      - data/processed/articles.json
+  build-index:
+    cmd: uv run python -m arabic_legal_qa.rag.dvc_index --root .
+    deps:
+      - data/raw/egyptian_civil_law.pdf
+      - data/processed/articles.json
+      - data/processed/extraction_report.json
+      - data/processed/validation_status.json
+      - pyproject.toml
+      - uv.lock
+      - src/arabic_legal_qa/rag/dvc_index.py
+      - src/arabic_legal_qa/rag/chunking.py
+      - src/arabic_legal_qa/rag/helper.py
+      - src/arabic_legal_qa/rag/llms.py
+      - src/arabic_legal_qa/rag/pdf_loader.py
+      - src/arabic_legal_qa/rag/qdrant_db.py
+      - src/helpers/config.py
+      - src/helpers/logging_config.py
+    outs:
+      - data/vector_store/qdrant

@@ -13,10 +13,13 @@ __pycache__/
 !.env.example
 
 # Generated project artifacts; version data with DVC instead
-data/raw/*
+data/raw/?*
 !data/raw/.gitkeep
+!data/raw/.gitignore
+!data/raw/*.dvc
 data/processed/*
 !data/processed/.gitkeep
+!data/processed/.gitignore
 data/indexes/
 data/vector_store/
 reports/*.html
@@ -24,11 +27,13 @@ reports/notebook_review/
 reports/experiments/
 reports/executed_*.ipynb
 data/experiments/
+data/evaluation/cache/
 data/model_cache/
 mlruns/
 *.db
 *.db-shm
 *.db-wal
+:memory:.ses
 
 # OS/editor files
 .DS_Store
