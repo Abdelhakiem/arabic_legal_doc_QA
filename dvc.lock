@@ -10,8 +10,8 @@ stages:
       size: 2599703
     - path: pyproject.toml
       hash: md5
-      md5: d1f4b6413f47e08aefe99c4c33890506
-      size: 1530
+      md5: 4d1a0cb02995bbb8ad9e06f3c98c4284
+      size: 1499
     - path: src/arabic_legal_qa/rag/helper.py
       hash: md5
       md5: ea4506f90f3e70f477c1b56575c880c4
@@ -26,8 +26,8 @@ stages:
       size: 16815
     - path: uv.lock
       hash: md5
-      md5: 49248ac226e90a0cb49f1d10e6501eff
-      size: 989937
+      md5: 90b1f24314d4f60ea0cb14516dd11f92
+      size: 1003118
     outs:
     - path: data/processed/article_candidates.json
       hash: md5
@@ -70,8 +70,8 @@ stages:
       size: 2599703
     - path: pyproject.toml
       hash: md5
-      md5: d1f4b6413f47e08aefe99c4c33890506
-      size: 1530
+      md5: 4d1a0cb02995bbb8ad9e06f3c98c4284
+      size: 1499
     - path: src/arabic_legal_qa/rag/chunking.py
       hash: md5
       md5: 82bcea45171e940ba42fac763f81e98d
@@ -106,11 +106,11 @@ stages:
       size: 4066
     - path: uv.lock
       hash: md5
-      md5: 49248ac226e90a0cb49f1d10e6501eff
-      size: 989937
+      md5: 90b1f24314d4f60ea0cb14516dd11f92
+      size: 1003118
     outs:
     - path: data/vector_store/qdrant
       hash: md5
-      md5: fda2f19d9cebf173918d459dcff78514.dir
+      md5: cc39883cc528485c07f9fa52cfc22481.dir
       size: 12464709
       nfiles: 62

@@ -19,12 +19,15 @@ The command writes `extraction_rows.json`, `article_candidates.json`, `extractio
 
 DVC tracks the source PDF and `data/evaluation/foundation_questions.json` with `.dvc` pointer files in Git. The five processed JSON outputs are produced by the `build-corpus` stage and recorded in `dvc.lock`. The `build-index` stage reads and validates the tracked canonical `articles.json`, chunks and embeds those records with the committed model revision, and builds the local Qdrant collection under `data/vector_store/qdrant/`. DVC tracks that index directory as a reproducible pipeline output. The index stage does not re-parse the PDF; the corpus stage owns PDF extraction.
 
-Each developer configures the machine-local DVC remote once. For the Google Drive for desktop mirror used by this project, point the local remote at that machine's synced `dvc-store` directory (the path is intentionally kept in ignored `.dvc/config.local`):
+The shared DVC remote is DagsHub S3 storage. Its URL and endpoint are in the committed `.dvc/config`; each developer stores their DagsHub token only in ignored `.dvc/config.local`. DVC uses the same DagsHub token for the S3 access key and secret key. Do not commit or paste the token into Git:
 
 ```bash
 uv sync --group dvc
-uv run --group dvc dvc remote add --local --default gdrive-sync \
-  "/path/to/Google Drive/My Drive/arabic_legal_doc_qa/dvc-store"
+read -s 'DAGSHUB_TOKEN?DagsHub token: '
+printf '\n'
+uv run --group dvc dvc remote modify dagshub --local access_key_id "$DAGSHUB_TOKEN"
+uv run --group dvc dvc remote modify dagshub --local secret_access_key "$DAGSHUB_TOKEN"
+unset DAGSHUB_TOKEN
 ```
 
 On a fresh Git checkout, fetch the artifacts and run the dependency-aware pipeline:
@@ -34,13 +37,27 @@ uv run --group dvc dvc pull
 uv run --group dvc dvc repro
 ```
 
-`dvc pull` restores the PDF, evaluation set, processed corpus, and saved index from the configured remote. A normal `dvc repro` skips stages whose tracked inputs and outputs already match `dvc.lock`. To explicitly prove a rebuild from the PDF through extraction and indexing, force the complete pipeline:
+`dvc pull` restores the PDF, evaluation set, processed corpus, and saved index from DagsHub. A normal `dvc repro` skips stages whose tracked inputs and outputs already match `dvc.lock`. To explicitly prove a rebuild from the PDF through extraction and indexing, force the complete pipeline:
 
 ```bash
 uv run --group dvc dvc repro --force
 ```
 
-To rebuild only the index from the already-pulled validated articles, run `uv run --group dvc dvc repro --force build-index`. DVC uses deterministic chunk IDs and records the corpus hash, embedding revision, chunk settings, and chunk digest in the Qdrant manifest. The embedding model and FastEmbed sparse model are cached locally under `data/model_cache`; they are re-downloaded on a new machine if absent. Allow Google Drive for desktop to finish syncing before pulling from another machine. Commit the `.dvc` pointers, `dvc.yaml`, `dvc.lock`, pipeline code, and dependency lockfile to Git; do not commit `.dvc/config.local` or the data files themselves.
+To rebuild only the index from the already-pulled validated articles, run `uv run --group dvc dvc repro --force build-index`. DVC uses deterministic chunk IDs and records the corpus hash, embedding revision, chunk settings, and chunk digest in the Qdrant manifest. The embedding model and FastEmbed sparse model are cached locally under `data/model_cache`; they are re-downloaded on a new machine if absent. Commit the `.dvc` pointers, `.dvc/config`, `dvc.yaml`, `dvc.lock`, pipeline code, and dependency lockfile to Git; do not commit `.dvc/config.local`, credentials, or data files themselves.
+
+For GitHub Actions, add a repository Actions secret named `DAGSHUB_TOKEN`. Configure the remote credentials from that secret before pulling data:
+
+```yaml
+- name: Pull DVC artifacts
+  env:
+    DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+  run: |
+    uv run --group dvc dvc remote modify dagshub --local access_key_id "$DAGSHUB_TOKEN"
+    uv run --group dvc dvc remote modify dagshub --local secret_access_key "$DAGSHUB_TOKEN"
+    uv run --group dvc dvc pull -r dagshub
+```
+
+Fork-triggered workflows do not receive repository secrets, so run DVC-dependent builds only on trusted pull requests or pushes to `main`.
 
 The active experimental pipeline is in `notebooks/basic_rag.ipynb`. It starts by loading one LangChain `Document` per validated article through `EgyptianCivilCodeLoader`; chunking, embeddings, vector storage, generation, and evaluation are implemented in later notebook sections.
 

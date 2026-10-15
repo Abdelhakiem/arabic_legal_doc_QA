@@ -1,4 +1,5 @@
 [core]
-    remote = gdrive
-['remote "gdrive"']
-    url = gdrive://1ZSjaH4HBxukX7GY4lKJ9ryZBTh2B6AaC/dvc-store
+    remote = dagshub
+['remote "dagshub"']
+    url = s3://dvc
+    endpointurl = https://dagshub.com/Abdelhakiem/arabic_legal_doc_QA.s3

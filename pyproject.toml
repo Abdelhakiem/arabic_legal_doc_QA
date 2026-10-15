@@ -31,8 +31,7 @@ arabic-legal-qa-evaluate = "arabic_legal_qa.evaluation.runner:main"
 
 [dependency-groups]
 dvc = [
-    "dvc[gdrive]>=3,<4",
-    "pyopenssl>=26.4,<27",
+    "dvc[s3]>=3,<4",
 ]
 notebook = [
     "jupyterlab>=4,<5",
