@@ -1,0 +1,154 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  IMAGE_NAME: docker.io/${{ vars.DOCKERHUB_USERNAME }}/arabic-legal-qa
+
+jobs:
+  validate:
+    name: Lint, test, and build (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --locked --group dvc --group test --group lint
+
+      - name: Configure DVC credentials
+        env:
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          if [ -z "$DAGSHUB_TOKEN" ]; then
+            echo "::error::DAGSHUB_TOKEN is unavailable. Fork pull requests do not receive repository secrets."
+            exit 1
+          fi
+          uv run --no-sync --group dvc dvc remote modify dagshub --local access_key_id "$DAGSHUB_TOKEN"
+          uv run --no-sync --group dvc dvc remote modify dagshub --local secret_access_key "$DAGSHUB_TOKEN"
+
+      - name: Restore DVC-managed corpus and index
+        run: uv run --no-sync --group dvc dvc pull -r dagshub
+
+      - name: Verify Docker build inputs are present
+        run: |
+          test -s data/raw/egyptian_civil_law.pdf
+          test -s data/processed/articles.json
+          test -s data/evaluation/foundation_questions.json
+          test -f data/vector_store/qdrant/manifest.json
+
+      - name: Lint
+        run: uv run --no-sync --group lint ruff check src tests
+
+      - name: Check formatting
+        run: uv run --no-sync --group lint ruff format --check src tests
+
+      - name: Test
+        run: uv run --no-sync --group test pytest -q
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (do not publish pull request builds)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          cache-from: type=gha,scope=arabic-legal-qa
+          cache-to: type=gha,mode=max,scope=arabic-legal-qa
+
+  publish:
+    name: Publish image to Docker Hub
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked DVC dependencies
+        run: uv sync --locked --group dvc
+
+      - name: Configure DVC credentials
+        env:
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          if [ -z "$DAGSHUB_TOKEN" ]; then
+            echo "::error::DAGSHUB_TOKEN is required to restore the DVC-managed Docker build inputs."
+            exit 1
+          fi
+          uv run --no-sync --group dvc dvc remote modify dagshub --local access_key_id "$DAGSHUB_TOKEN"
+          uv run --no-sync --group dvc dvc remote modify dagshub --local secret_access_key "$DAGSHUB_TOKEN"
+
+      - name: Restore DVC-managed corpus and index
+        run: uv run --no-sync --group dvc dvc pull -r dagshub
+
+      - name: Verify Docker build inputs are present
+        run: |
+          test -s data/raw/egyptian_civil_law.pdf
+          test -s data/processed/articles.json
+          test -s data/evaluation/foundation_questions.json
+          test -f data/vector_store/qdrant/manifest.json
+
+      - name: Verify Docker Hub credentials are configured
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ]; then
+            echo "::error::Set the DOCKERHUB_USERNAME repository variable to your Docker Hub namespace."
+            exit 1
+          fi
+          if [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Set the DOCKERHUB_TOKEN repository secret to a Docker Hub access token with read/write permission."
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and publish image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:main
+          cache-from: type=gha,scope=arabic-legal-qa
+          cache-to: type=gha,mode=max,scope=arabic-legal-qa

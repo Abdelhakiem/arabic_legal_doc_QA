@@ -1,3 +1,5 @@
+import types
+
 from langchain_core.documents import Document
 
 from arabic_legal_qa.rag.chunking import chunk_documents, token_count
@@ -7,9 +9,6 @@ from helpers.config import ChunkingConfig
 class CharacterTokenizer:
     def encode(self, text, add_special_tokens=True):
         return types.SimpleNamespace(ids=list(text))
-
-
-import types
 
 
 def test_chunking_applies_overlap_without_exceeding_embedding_budget() -> None:
