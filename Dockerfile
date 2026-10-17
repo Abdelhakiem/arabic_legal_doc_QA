@@ -20,7 +20,7 @@ RUN groupadd --gid 10001 appuser \
 
 # Install runtime dependencies first so source edits do not invalidate this layer.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-install-project \
+RUN uv sync --locked --no-dev --extra ollama --no-install-project \
     && uv cache clean
 
 COPY --chown=appuser:appuser src/ ./src/
@@ -32,7 +32,7 @@ RUN test -f data/raw/egyptian_civil_law.pdf \
     && test -f data/processed/articles.json \
     && test -f data/vector_store/qdrant/manifest.json
 
-RUN uv sync --locked --no-dev \
+RUN uv sync --locked --no-dev --extra ollama \
     && uv cache clean
 
 USER appuser

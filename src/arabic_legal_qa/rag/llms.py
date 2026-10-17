@@ -8,11 +8,13 @@ embedding bundle from here instead of constructing model objects themselves.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import time
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
+from urllib.request import urlopen
 
 import numpy as np
 from langchain_core.embeddings import Embeddings
@@ -42,12 +44,31 @@ def _adapter_available(module_name: str) -> bool:
         return module_name in __import__("sys").modules
 
 
+def _ollama_model_available(config: LLMConfig) -> bool:
+    """Return whether the configured Ollama endpoint serves the selected model."""
+
+    model_name = config.model_name or config.ollama_model
+    endpoint = f"{config.base_url.rstrip('/')}/api/tags"
+    try:
+        with urlopen(endpoint, timeout=config.ollama_probe_timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+
+    models = payload.get("models", []) if isinstance(payload, dict) else []
+    return any(
+        isinstance(model, dict)
+        and model_name in {model.get("name"), model.get("model")}
+        for model in models
+    )
+
+
 def resolve_llm_config(config: LLMConfig | None = None) -> LLMConfig:
-    """Choose Groq when configured, otherwise use local Ollama.
+    """Prefer a reachable Ollama model, falling back to Groq in ``auto`` mode.
 
     An explicit ``LLM_PROVIDER`` (or ``config.provider``) can pin a provider;
-    the default ``auto`` policy prefers Groq when a token and adapter exist.
-    This checks configuration and installed adapters, not remote API health.
+    ``auto`` checks the Ollama endpoint and model first, then uses Groq when
+    configured. Provider selection is performed once during initialization.
     """
 
     selected = config or get_settings().llm_config()
@@ -57,7 +78,34 @@ def resolve_llm_config(config: LLMConfig | None = None) -> LLMConfig:
     ollama_model = selected.model_name or selected.ollama_model
 
     if provider == "auto":
+        ollama_config = replace(
+            selected,
+            provider="ollama",
+            model_name=ollama_model,
+            ollama_model=ollama_model,
+        )
+        if _adapter_available("langchain_ollama") and _ollama_model_available(
+            ollama_config
+        ):
+            logger.info(
+                "Ollama model is available; selecting Ollama",
+                extra={
+                    "event": "rag.llm.provider_selected",
+                    "provider": "ollama",
+                    "model_name": ollama_model,
+                },
+            )
+            return ollama_config
+
         if groq_token and _adapter_available("langchain_groq"):
+            logger.info(
+                "Ollama model is unavailable; falling back to Groq",
+                extra={
+                    "event": "rag.llm.provider_fallback",
+                    "provider": "groq",
+                    "model_name": groq_model,
+                },
+            )
             return replace(
                 selected,
                 provider="groq",
@@ -66,14 +114,13 @@ def resolve_llm_config(config: LLMConfig | None = None) -> LLMConfig:
             )
         if groq_token:
             logger.warning(
-                "Groq credentials are configured but the LangChain Groq adapter is unavailable; trying Ollama",
-                extra={"event": "rag.llm.provider_fallback", "provider": "ollama"},
+                "Groq credentials are configured but its LangChain adapter is unavailable",
+                extra={"event": "rag.llm.adapter_unavailable", "provider": "groq"},
             )
-        if _adapter_available("langchain_ollama"):
-            return replace(selected, provider="ollama", model_name=ollama_model)
         raise RuntimeError(
-            "No LLM provider is available. Configure GROQ_TOKEN and install "
-            "langchain-groq, or install/configure langchain-ollama and an Ollama server."
+            "No LLM provider is available. Start an Ollama server with model "
+            f"{ollama_model!r} and install langchain-ollama, or configure GROQ_TOKEN "
+            "and install langchain-groq."
         )
 
     if provider == "groq":
@@ -90,7 +137,18 @@ def resolve_llm_config(config: LLMConfig | None = None) -> LLMConfig:
             raise RuntimeError(
                 "Ollama was selected but langchain-ollama is not installed"
             )
-        return replace(selected, provider="ollama", model_name=ollama_model)
+        ollama_config = replace(
+            selected,
+            provider="ollama",
+            model_name=ollama_model,
+            ollama_model=ollama_model,
+        )
+        if not _ollama_model_available(ollama_config):
+            raise RuntimeError(
+                f"Ollama is selected, but model {ollama_model!r} is unavailable at "
+                f"{selected.base_url!r}"
+            )
+        return ollama_config
 
     if provider in {"google", "gemini", "google_genai"}:
         return replace(

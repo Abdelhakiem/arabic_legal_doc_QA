@@ -50,6 +50,7 @@ DEFAULT_CHUNK_OVERLAP = 0
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_PROBE_TIMEOUT_SECONDS = 1.5
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_LLM_PROVIDER = "auto"
 DEFAULT_LLM_TEMPERATURE = 0.0
@@ -104,6 +105,7 @@ class LLMConfig:
     groq_model: str = DEFAULT_GROQ_MODEL
     ollama_model: str = DEFAULT_OLLAMA_MODEL
     base_url: str = DEFAULT_OLLAMA_BASE_URL
+    ollama_probe_timeout_seconds: float = DEFAULT_OLLAMA_PROBE_TIMEOUT_SECONDS
     gemini_model: str = DEFAULT_GEMINI_MODEL
     temperature: float = DEFAULT_LLM_TEMPERATURE
     num_ctx: int = DEFAULT_LLM_CONTEXT_TOKENS
@@ -271,6 +273,9 @@ class Settings(BaseSettings):
     qroq_model: str = DEFAULT_GROQ_MODEL
     ollama_model: str = DEFAULT_OLLAMA_MODEL
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
+    ollama_probe_timeout_seconds: float = Field(
+        default=DEFAULT_OLLAMA_PROBE_TIMEOUT_SECONDS, gt=0
+    )
     gemini_model: str = DEFAULT_GEMINI_MODEL
     llm_temperature: float = DEFAULT_LLM_TEMPERATURE
     llm_num_ctx: int = DEFAULT_LLM_CONTEXT_TOKENS
@@ -320,6 +325,7 @@ class Settings(BaseSettings):
             groq_model=self.qroq_model,
             ollama_model=self.ollama_model,
             base_url=self.ollama_base_url,
+            ollama_probe_timeout_seconds=self.ollama_probe_timeout_seconds,
             gemini_model=self.gemini_model,
             temperature=self.llm_temperature,
             num_ctx=self.llm_num_ctx,

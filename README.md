@@ -190,11 +190,11 @@ data/                     # local source, processed corpus, and Qdrant artifacts
 
 ## Run with Docker Compose
 
-Compose runs two services from the same image: `app` (FastAPI/RAG) and `mlflow` (tracking UI, REST API, and Model Registry). Qdrant remains embedded in the app container; there is no separate Qdrant service. MLflow run metadata and artifacts persist in the `mlflow-data` named volume using SQLite/local artifacts, suitable for a single-host deployment. Ollama is intentionally not included; Compose selects Groq, so set `GROQ_TOKEN` in `.env`. The Hugging Face embedding model is downloaded on first startup and persisted in a named volume, so first startup needs internet access and may take a few minutes.
+Compose runs two services from the same image: `app` (FastAPI/RAG) and `mlflow` (tracking UI, REST API, and Model Registry). Qdrant remains embedded in the app container; there is no separate Qdrant service. MLflow run metadata and artifacts persist in the `mlflow-data` named volume using SQLite/local artifacts, suitable for a single-host deployment. The app image includes the optional Ollama adapter. In Compose, `LLM_PROVIDER=auto` checks the configured Ollama endpoint and model first; if that probe fails, it uses Groq when `GROQ_TOKEN` is configured. Ollama itself is not bundled in Compose, avoiding another large model-serving container: by default the app looks for Ollama on the host at `http://host.docker.internal:11434`. The Hugging Face embedding model is downloaded on first startup and persisted in a named volume, so first startup needs internet access and may take a few minutes.
 
 Before building, restore the artifact bundle with DVC (`dvc pull` after configuring the machine-local remote above). The image snapshots the corpus and index at build time, so rebuild the image after changing them.
 
-Set `GROQ_TOKEN` in `.env` after copying the example file. Then the three commands are:
+Set `GROQ_TOKEN` in `.env` after copying the example file to enable fallback. To use Ollama instead, start Ollama on the host, pull the configured model (default `qwen2.5:7b`), and ensure the server is reachable from Docker. You can override `OLLAMA_BASE_URL` in `.env` for another endpoint. The app checks Ollama once at startup and selects it only if that model is available; otherwise it falls back to Groq. Set `LLM_PROVIDER=ollama` to require Ollama or `LLM_PROVIDER=groq` to force Groq. Then the three commands are:
 
 ```bash
 cp -n .env.example .env
@@ -246,7 +246,7 @@ uv run --extra evaluation arabic-legal-qa-evaluate --validate-champion
 
 The compact foundation set has 10 questions (6 dev, 4 held-out), balanced across Arabic and English. It includes multi-article retrieval cases, repeal-status checks, and out-of-scope questions. It has expected article IDs but no reviewed reference answers, so retrieval screening uses deterministic expected-article hit/recall and finalist RAGAS runs use no-reference context precision and faithfulness by default. `--judge-metrics all` also adds context utilization and answer relevancy. If every question in a split has a human-reviewed `reference_answer`, the runner automatically adds reference-based context precision, context recall, and answer correctness. Do not fill those answers with model-generated text and call them gold labels; this small set is for initial comparisons, not statistically reliable claims.
 
-For local development without Docker, install dependencies with `uv sync --all-groups`, then run the CLI or `uv run uvicorn api.app:app --host 0.0.0.0 --port 8000` from the repository root. The command-line entry point is `arabic-legal-qa`. If you want to use Ollama locally, install its optional adapter with `uv sync --all-groups --extra ollama` and configure `LLM_PROVIDER=ollama`.
+For local development without Docker, install dependencies with `uv sync --all-groups --extra ollama`, then run the CLI or `uv run uvicorn api.app:app --host 0.0.0.0 --port 8000` from the repository root. The command-line entry point is `arabic-legal-qa`. Local development defaults to Ollama at `http://localhost:11434`; in `auto` mode the configured Ollama model is tried first, then Groq. Set `LLM_PROVIDER=ollama` or `LLM_PROVIDER=groq` to force one provider.
 
 ## Quality gates
 
