@@ -45,6 +45,7 @@ def test_query_retrieves_once_with_original_question_and_generates_once(
     assert retrieved_queries == [question]
     assert len(llm.prompts) == 1
     assert question in llm.prompts[0]
+    assert "أجب عن سؤال المستخدم باللغة العربية" in llm.prompts[0]
     assert "The contract may not be revoked" in llm.prompts[0]
     assert result["evidence_count"] == 1
     assert result["references"][0]["article_number"] == 147
@@ -74,3 +75,28 @@ def test_query_abstains_after_single_original_question_retrieval(tmp_path, monke
     assert result["evidence_count"] == 0
     assert result["references"] == []
     assert "لا توجد أدلة كافية" in result["answer"]
+
+
+def test_query_uses_english_prompt_for_english_question(tmp_path, monkeypatch):
+    question = "When can a contract be modified?"
+    rag = RAG(RAGConfig(root=tmp_path))
+    llm = FakeChatModel()
+
+    monkeypatch.setattr(
+        rag,
+        "retrieve",
+        lambda _query, k=None, prefetch_k=None: [
+            Document(
+                page_content="A contract may not be modified except by agreement.",
+                metadata={"article_number": 147, "language": "en"},
+            )
+        ],
+    )
+    monkeypatch.setattr(rag, "_load_llm", lambda: llm)
+
+    rag.query(question)
+
+    assert len(llm.prompts) == 1
+    assert question in llm.prompts[0]
+    assert "Answer the user's question in English" in llm.prompts[0]
+    assert "الأدلة المسترجعة" not in llm.prompts[0]
