@@ -177,6 +177,7 @@ src/
   arabic_legal_qa/rag/    # ingestion, Qdrant, retrieval, LLM, citations
 Dockerfile                # single application image
 compose.yaml              # `app` plus persistent MLflow tracking/registry service
+compose.langfuse.yaml     # optional self-hosted Langfuse stack
 data/                     # local source, processed corpus, and Qdrant artifacts
 ```
 
@@ -190,7 +191,7 @@ data/                     # local source, processed corpus, and Qdrant artifacts
 
 ## Run with Docker Compose
 
-Compose runs two services from the same image: `app` (FastAPI/RAG) and `mlflow` (tracking UI, REST API, and Model Registry). Qdrant remains embedded in the app container; there is no separate Qdrant service. MLflow run metadata and artifacts persist in the `mlflow-data` named volume using SQLite/local artifacts, suitable for a single-host deployment. The app image includes the optional Ollama adapter. In Compose, `LLM_PROVIDER=auto` checks the configured Ollama endpoint and model first; if that probe fails, it uses Groq when `GROQ_TOKEN` is configured. Ollama itself is not bundled in Compose, avoiding another large model-serving container: by default the app looks for Ollama on the host at `http://host.docker.internal:11434`. The Hugging Face embedding model is downloaded on first startup and persisted in a named volume, so first startup needs internet access and may take a few minutes.
+By default Compose runs `app` (FastAPI/RAG) and `mlflow` (tracking UI, REST API, and Model Registry). Qdrant remains embedded in the app container. MLflow data persists in the `mlflow-data` named volume. The optional Langfuse stack is in `compose.langfuse.yaml`; it runs Langfuse web/worker plus Postgres, ClickHouse, Redis, and MinIO. The app's Langfuse tracing is disabled unless `LANGFUSE_ENABLED=true` and project keys are configured. By default trace content is not captured; `LANGFUSE_CAPTURE_CONTENT=true` includes user question, prompt/context, and answer, so enable it only after reviewing privacy needs. Ollama is not bundled; in Compose the app checks the host at `http://host.docker.internal:11434` before falling back to Groq. The embedding model is cached in a named volume.
 
 Before building, restore the artifact bundle with DVC (`dvc pull` after configuring the machine-local remote above). The image snapshots the corpus and index at build time, so rebuild the image after changing them.
 
@@ -209,6 +210,35 @@ curl -fsS http://localhost:8000/health && curl -fsS http://localhost:8000/ask -H
 ```
 
 The Compose health checks wait for MLflow and the API/RAG resources to become ready. MLflow is available at `http://localhost:5000`; its data survives container recreation in `mlflow-data`. Its Host allowlist is limited to the local client and Compose service hostnames; the published port is also bound to loopback. Do not publish it on a network interface without configuring a restrictive allowlist and authentication. The app looks for model `arabic-legal-rag-config` with alias `champion` at startup. Before an alias is promoted it warns and uses centralized defaults; set `MLFLOW_CONFIG_REQUIRED=true` to make startup fail instead. After promoting a new config, restart `app` to load it; the service intentionally does not mutate a live index/config mid-request. Keep `.env` private; do not commit credentials. This uses a local image build, so Docker Compose v2 and the artifact bundle above are prerequisites.
+
+### Langfuse tracing
+
+Copy the `.env.example` settings into your private `.env`, then start the stack with the app and MLflow:
+
+```bash
+docker compose -f compose.yaml -f compose.langfuse.yaml --profile langfuse up --build -d --wait
+```
+
+Open `http://localhost:3000`, complete the initial setup, create a project, and copy its public/secret API keys into `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env`. Set `LANGFUSE_ENABLED=true`, then recreate the app so it reads the settings:
+
+```bash
+docker compose -f compose.yaml -f compose.langfuse.yaml --profile langfuse up -d --force-recreate app
+```
+
+Keep `LANGFUSE_CAPTURE_CONTENT=false` initially. The app connects to the Compose service at `http://langfuse-web:3000`; a locally run Uvicorn process uses `http://localhost:3000`. Langfuse is observability, MLflow remains the config/experiment registry, and RAGAS remains the offline evaluator. The SDK records a RAG request trace with retrieval metadata and generation details; full question/prompt/answer text is excluded unless explicitly enabled.
+
+For convenience, the Compose overlay supplies fixed development credentials for its internal services; they are not production secrets. Ports are bound to loopback for local use. Do not expose this stack to a network or reuse these defaults outside local experimentation. The Langfuse project API keys remain in `.env` because the RAG app needs them to send traces.
+
+Explore the Langfuse deployment and UI:
+
+```bash
+docker compose -f compose.yaml -f compose.langfuse.yaml --profile langfuse ps
+docker compose -f compose.yaml -f compose.langfuse.yaml --profile langfuse logs -f langfuse-web langfuse-worker
+curl -fsS http://localhost:3000/api/public/health
+curl -fsS http://localhost:8000/ask -H 'Content-Type: application/json' -d '{"question":"ما آثار العقد؟"}'
+```
+
+Then send a normal `/ask` request to `http://localhost:8000` and inspect **Traces** in Langfuse. Stop the stack without deleting stored traces with `docker compose -f compose.yaml -f compose.langfuse.yaml --profile langfuse down`; do not add `-v` unless you intend to delete Langfuse and MLflow persisted data.
 
 ### MLflow experiments and RAGAS
 

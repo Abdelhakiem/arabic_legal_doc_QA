@@ -72,6 +72,8 @@ DEFAULT_MLFLOW_CONFIG_ALIAS = "champion"
 DEFAULT_MLFLOW_EVALUATION = "rag-config-experiments"
 DEFAULT_MLFLOW_TRACKING_URI = "http://localhost:5000"
 DEFAULT_MLFLOW_MIN_FAITHFULNESS = 0.75
+DEFAULT_LANGFUSE_BASE_URL = "http://localhost:3000"
+DEFAULT_LANGFUSE_ENVIRONMENT = "development"
 
 # Backward-compatible constants for existing parser consumers.
 EXTRACTOR_VERSION = DEFAULT_EXTRACTOR_VERSION
@@ -304,6 +306,19 @@ class Settings(BaseSettings):
     mlflow_config_required: bool = False
     mlflow_experiment_name: str = DEFAULT_MLFLOW_EVALUATION
     mlflow_min_faithfulness: float = DEFAULT_MLFLOW_MIN_FAITHFULNESS
+
+    # Langfuse tracing is opt-in; request content is not captured by default.
+    langfuse_enabled: bool = False
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_base_url: str = DEFAULT_LANGFUSE_BASE_URL
+    langfuse_environment: str = Field(
+        default=DEFAULT_LANGFUSE_ENVIRONMENT,
+        validation_alias=AliasChoices(
+            "LANGFUSE_TRACING_ENVIRONMENT", "LANGFUSE_ENVIRONMENT"
+        ),
+    )
+    langfuse_capture_content: bool = False
 
     def embedding_config(self) -> EmbeddingConfig:
         return EmbeddingConfig(

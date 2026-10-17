@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from api.schema import AskRequest, AskResponse, HealthResponse, is_article_citation
 from arabic_legal_qa.rag.orchestrator import RAG, create_rag
 from helpers.config import get_settings
+from helpers.langfuse import create_langfuse_client, shutdown_langfuse
 from helpers.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -61,10 +62,17 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
         app.state.documents_indexed = 0
         app.state.startup_errors = []
         rag = None
+        langfuse_client = None
         try:
-            configure_logging(get_settings().log_level)
+            settings = get_settings()
+            configure_logging(settings.log_level)
+            langfuse_client = create_langfuse_client(settings)
             rag = factory()
+            if isinstance(rag, RAG):
+                rag.langfuse_client = langfuse_client
+                rag.langfuse_capture_content = settings.langfuse_capture_content
             app.state.rag = rag
+            app.state.langfuse_client = langfuse_client
             app.state.documents_indexed = rag.initialize()
             app.state.ready = True
             logger.info(
@@ -85,8 +93,11 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
         try:
             yield
         finally:
-            if rag is not None:
-                rag.close()
+            try:
+                if rag is not None:
+                    rag.close()
+            finally:
+                shutdown_langfuse(langfuse_client)
 
     app = FastAPI(
         title="Arabic Legal QA",

@@ -52,6 +52,10 @@ services:
       MLFLOW_CONFIG_MODEL: ${MLFLOW_CONFIG_MODEL:-arabic-legal-rag-config}
       MLFLOW_CONFIG_ALIAS: ${MLFLOW_CONFIG_ALIAS:-champion}
       MLFLOW_CONFIG_REQUIRED: ${MLFLOW_CONFIG_REQUIRED:-false}
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-development}
+      LANGFUSE_CAPTURE_CONTENT: ${LANGFUSE_CAPTURE_CONTENT:-false}
     depends_on:
       mlflow:
         condition: service_healthy

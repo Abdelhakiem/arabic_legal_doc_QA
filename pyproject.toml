@@ -9,6 +9,7 @@ dependencies = [
     "huggingface-hub>=1,<2",
     "langchain-core>=1,<2",
     "langchain-groq>=1,<2",
+    "langfuse>=4,<5",
     "mlflow>=3,<4",
     "qdrant-client>=1.15,<2",
     "fastembed>=0.7,<1",
