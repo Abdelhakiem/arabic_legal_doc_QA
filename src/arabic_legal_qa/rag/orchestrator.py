@@ -39,13 +39,13 @@ from helpers.config import (
     get_settings,
     project_root,
 )
+from helpers.langfuse import observation, update_observation
 
 logger = logging.getLogger(__name__)
 
 
-ANSWER_PROMPT = """You are a careful legal information assistant.
-Answer the user's question using only the retrieved Egyptian Civil Code evidence below.
-The preferred user language is: {language}. Write the answer in that language.
+ANSWER_PROMPT_EN = """You are a careful legal information assistant.
+Answer the user's question in English using only the retrieved Egyptian Civil Code evidence below.
 If the evidence is insufficient, say so clearly and do not guess.
 Do not invent article numbers or legal rules. Cite supporting articles inline
 using the exact form [Article N]. Treat repealed articles as repealed.
@@ -56,7 +56,19 @@ Retrieved evidence:
 User question:
 {question}
 """
-ANSWER_PROMPT_VERSION = "legal-grounded-v1"
+ANSWER_PROMPT_AR = """أنت مساعد قانوني دقيق.
+أجب عن سؤال المستخدم باللغة العربية، مستندًا فقط إلى أدلة القانون المدني المصري المسترجعة أدناه.
+إذا كانت الأدلة غير كافية، فاذكر ذلك بوضوح ولا تخمّن.
+لا تخترع أرقام مواد أو قواعد قانونية. استشهد بالمواد المؤيدة داخل الإجابة
+بالصيغة الدقيقة [Article N]. وتعامل مع المواد الملغاة على أنها ملغاة.
+
+الأدلة المسترجعة:
+{context}
+
+سؤال المستخدم:
+{question}
+"""
+ANSWER_PROMPT_VERSION = "legal-grounded-bilingual-v2"
 
 
 def _preferred_language(text: str) -> str:
@@ -84,6 +96,8 @@ class RAG:
         default_factory=lambda: get_settings().embedding_config()
     )
     llm_config: LLMConfig = field(default_factory=lambda: get_settings().llm_config())
+    langfuse_client: Any | None = field(default=None, repr=False)
+    langfuse_capture_content: bool = False
     embedding_bundle: EmbeddingBundle | None = field(default=None, init=False)
     llm: Any | None = field(default=None, init=False)
     qdrant_client: Any | None = field(default=None, init=False)
@@ -324,6 +338,49 @@ class RAG:
         include_trace: bool = False,
     ) -> dict[str, Any]:
         """Retrieve using the user's question verbatim and answer with evidence."""
+        language = _preferred_language(question)
+        with observation(
+            self.langfuse_client,
+            as_type="span",
+            name="rag.query",
+            input={"question": question} if self.langfuse_capture_content else None,
+            metadata={
+                "question_language": language,
+                "prompt_version": ANSWER_PROMPT_VERSION,
+            },
+        ) as trace:
+            result = self._query_impl(
+                question,
+                k=k,
+                prefetch_k=prefetch_k,
+                min_evidence=min_evidence,
+                include_trace=include_trace,
+                trace_client=self.langfuse_client,
+            )
+            trace_output: dict[str, Any] = {
+                "evidence_count": result["evidence_count"],
+                "sources": [
+                    ref.get("citation")
+                    for ref in result.get("references", [])
+                    if ref.get("citation")
+                ],
+            }
+            if self.langfuse_capture_content:
+                trace_output["answer"] = result["answer"]
+            update_observation(trace, output=trace_output)
+            return result
+
+    def _query_impl(
+        self,
+        question: str,
+        k: int | None = None,
+        prefetch_k: int | None = None,
+        min_evidence: int | None = None,
+        *,
+        include_trace: bool = False,
+        trace_client: Any | None = None,
+    ) -> dict[str, Any]:
+        """Execute retrieval and generation, optionally recording child spans."""
         k = self.config.retrieval_k if k is None else k
         prefetch_k = self.config.prefetch_k if prefetch_k is None else prefetch_k
         min_evidence = (
@@ -335,9 +392,36 @@ class RAG:
             extra={"event": "rag.query.started", "operation": "query"},
         )
         try:
-            documents = self.retrieve(question, k=k, prefetch_k=prefetch_k)
-            references = self._references(documents)
             language = _preferred_language(question)
+            with observation(
+                trace_client,
+                as_type="retriever",
+                name="qdrant.hybrid_search",
+                input=(
+                    {"question": question, "k": k}
+                    if self.langfuse_capture_content
+                    else {"k": k}
+                ),
+                metadata={"question_language": language},
+            ) as retrieval_span:
+                documents = self.retrieve(question, k=k, prefetch_k=prefetch_k)
+            references = self._references(documents)
+            update_observation(
+                retrieval_span,
+                output={
+                    "retrieved_count": len(documents),
+                    "articles": [
+                        ref.get("citation") for ref in references if ref.get("citation")
+                    ],
+                    "languages": sorted(
+                        {
+                            str(doc.metadata.get("language"))
+                            for doc in documents
+                            if doc.metadata.get("language")
+                        }
+                    ),
+                },
+            )
             logger.info(
                 "RAG retrieval completed",
                 extra={
@@ -390,15 +474,36 @@ class RAG:
                     f"Language {metadata.get('language')} | Repealed {metadata.get('is_repealed', False)}\n"
                     f"{document.page_content}"
                 )
-            response = self._load_llm().invoke(
-                ANSWER_PROMPT.format(
-                    language=language,
-                    context="\n\n".join(context_parts),
-                    question=question,
-                )
+            answer_prompt = (
+                ANSWER_PROMPT_AR if language == "Arabic" else ANSWER_PROMPT_EN
             )
+            prompt = answer_prompt.format(
+                context="\n\n".join(context_parts),
+                question=question,
+            )
+            llm = self._load_llm()
+            with observation(
+                trace_client,
+                as_type="generation",
+                name="answer-generation",
+                model=self.llm_config.model_name,
+                input=prompt if self.langfuse_capture_content else None,
+                metadata={
+                    "provider": self.llm_config.provider,
+                    "prompt_version": ANSWER_PROMPT_VERSION,
+                    "answer_language": language,
+                },
+            ) as generation:
+                response = llm.invoke(prompt)
+                answer = _message_text(response)
+                update_observation(
+                    generation,
+                    output=(
+                        answer if self.langfuse_capture_content else {"generated": True}
+                    ),
+                )
             result = {
-                "answer": _message_text(response),
+                "answer": answer,
                 "references": references,
                 "evidence_count": len(documents),
             }
