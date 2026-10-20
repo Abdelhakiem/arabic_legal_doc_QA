@@ -3,7 +3,8 @@
 ## Project overview
 
 Arabic Legal Document Q&A is a bilingual retrieval-augmented generation (RAG) service over the Egyptian Civil Code. It answers Arabic and English questions from a validated, versioned legal corpus, returns canonical article citations, discloses repeal status, and abstains when retrieved evidence is insufficient.
-
+### Demo
+![alt text](web_app.png)
 The project combines a reproducible PDF-to-vector-index pipeline with FastAPI and an MLOps/observability stack:
 
 - Article-aware bilingual retrieval using multilingual E5 dense embeddings and BM25 sparse vectors.
@@ -19,7 +20,7 @@ The project combines a reproducible PDF-to-vector-index pipeline with FastAPI an
 
 | Service | URL | Availability |
 | --- | --- | --- |
-| FastAPI | <http://localhost:8000> | Core stack |
+| FastAPI web app and API | <http://localhost:8000> | Core stack |
 | Swagger/OpenAPI | <http://localhost:8000/docs> | Core stack |
 | Health | <http://localhost:8000/health> | Core stack |
 | MLflow | <http://localhost:5000> | Core stack |
@@ -28,7 +29,7 @@ The project combines a reproducible PDF-to-vector-index pipeline with FastAPI an
 | Prometheus | <http://localhost:9092> | Monitoring profile |
 | Pushgateway | <http://localhost:9191> | Monitoring profile |
 
-`/docs` is FastAPI's interactive developer interface for trying the API. The project does not currently include a separate end-user web application.
+The FastAPI service serves a lightweight bilingual web interface at `/` and the API at `/ask`. `/docs` remains available as the interactive developer interface.
 
 ## Quickstart
 
@@ -70,6 +71,8 @@ curl -fsS http://localhost:8000/ask \
   -H 'Content-Type: application/json' \
   -d '{"question":"ما آثار العقد؟"}'
 ```
+
+Open <http://localhost:8000/> to use the web interface, or <http://localhost:8000/docs> to try the API directly.
 
 The core setup starts FastAPI and MLflow. Langfuse and Grafana/Prometheus are optional overlays described later.
 
@@ -176,7 +179,7 @@ The PDF is an input artifact, not the runtime retrieval source. `data/processed/
 ├── notebooks/basic_rag.ipynb         # exploratory and educational experiments
 ├── reports/mlflow_runs_results.png   # captured MLflow result
 ├── src/
-│   ├── api/                          # FastAPI lifecycle, routes, and schemas
+│   ├── api/                          # FastAPI routes, schemas, and static web UI
 │   ├── arabic_legal_qa/
 │   │   ├── rag/                      # production extraction, index, retrieval,
 │   │   │                             # prompting, generation, citations, and CLI
