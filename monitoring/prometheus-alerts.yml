@@ -1,0 +1,49 @@
+groups:
+  - name: arabic-legal-rag-quality
+    rules:
+      - alert: RAGASFaithfulnessBelowThreshold
+        expr: |
+          (ragas_quality_score{metric="faithfulness", language="all"}
+            < on(job, service) ragas_faithfulness_threshold)
+          and on(job, service) (ragas_monitor_run_success == 1)
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAGAS faithfulness is below the configured threshold"
+          description: >-
+            Mean faithfulness={{ $value }}. Review the latest monitoring run in
+            MLflow experiment rag-50-question-monitoring.
+
+      - alert: RAGASFaithfulnessDrift
+        expr: |
+          (ragas_metric_delta{metric="faithfulness", language="all"}
+            <= on(job, service) -ragas_faithfulness_drift_threshold)
+          and on(job, service) (ragas_monitor_run_success == 1)
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAGAS faithfulness dropped versus the comparable run"
+          description: >-
+            Faithfulness delta={{ $value }} on the same question set and corpus.
+
+      - alert: RAGASMonitorFailed
+        expr: ragas_monitor_run_success == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The latest scheduled RAGAS monitor failed"
+          description: "Check the ragas-monitor container logs and MLflow run status."
+
+      - alert: RAGASMonitorStale
+        expr: |
+          (time() - ragas_monitor_last_success_timestamp_seconds > 93600)
+          or absent(ragas_monitor_last_success_timestamp_seconds)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No successful RAGAS monitor result in the last 26 hours"
+          description: "Check the scheduled monitor service and Pushgateway."

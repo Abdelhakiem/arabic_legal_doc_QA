@@ -4,6 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     command:
       - mlflow
       - server
@@ -40,6 +41,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     env_file:
       - .env
     environment:
@@ -53,6 +55,7 @@ services:
       MLFLOW_CONFIG_ALIAS: ${MLFLOW_CONFIG_ALIAS:-champion}
       MLFLOW_CONFIG_REQUIRED: ${MLFLOW_CONFIG_REQUIRED:-false}
       LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_REQUIRED: ${LANGFUSE_REQUIRED:-false}
       LANGFUSE_BASE_URL: http://langfuse-web:3000
       LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-development}
       LANGFUSE_CAPTURE_CONTENT: ${LANGFUSE_CAPTURE_CONTENT:-false}

@@ -1,0 +1,93 @@
+# Optional local metrics/evaluation stack. Use together with compose.yaml and
+# compose.langfuse.yaml so every monitor request has a Langfuse trace.
+services:
+  app:
+    environment:
+      LANGFUSE_ENABLED: "true"
+      LANGFUSE_REQUIRED: "true"
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+
+  ragas-monitor:
+    image: arabic-legal-qa:monitor
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: monitor
+    command:
+      - arabic-legal-qa-monitor
+      - --interval-hours
+      - ${RAGAS_MONITOR_INTERVAL_HOURS:-24}
+    env_file:
+      - .env
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      LANGFUSE_ENABLED: "true"
+      LANGFUSE_REQUIRED: "true"
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      PROMETHEUS_PUSHGATEWAY_URL: http://pushgateway:9091
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_PROBE_TIMEOUT_SECONDS: ${OLLAMA_PROBE_TIMEOUT_SECONDS:-1.5}
+      RAGAS_MONITOR_INTERVAL_HOURS: ${RAGAS_MONITOR_INTERVAL_HOURS:-24}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      langfuse-web:
+        condition: service_healthy
+      pushgateway:
+        condition: service_started
+    volumes:
+      - model-cache:/app/data/model_cache
+    restart: unless-stopped
+    profiles: [ "monitoring" ]
+
+  pushgateway:
+    image: prom/pushgateway:v1.11.2
+    command: [ "--persistence.file=/pushgateway/metrics.db" ]
+    volumes:
+      - pushgateway-data:/pushgateway
+    ports:
+      - "127.0.0.1:9191:9091"
+    restart: unless-stopped
+    profiles: [ "monitoring" ]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9092:9090"
+    depends_on:
+      - pushgateway
+    restart: unless-stopped
+    profiles: [ "monitoring" ]
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana-local-dev-password}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    profiles: [ "monitoring" ]
+
+volumes:
+  model-cache:
+  pushgateway-data:
+  prometheus-data:
+  grafana-data:

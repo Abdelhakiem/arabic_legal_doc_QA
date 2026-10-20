@@ -98,6 +98,7 @@ class RAG:
     llm_config: LLMConfig = field(default_factory=lambda: get_settings().llm_config())
     langfuse_client: Any | None = field(default=None, repr=False)
     langfuse_capture_content: bool = False
+    langfuse_required: bool = False
     embedding_bundle: EmbeddingBundle | None = field(default=None, init=False)
     llm: Any | None = field(default=None, init=False)
     qdrant_client: Any | None = field(default=None, init=False)
@@ -336,18 +337,27 @@ class RAG:
         min_evidence: int | None = None,
         *,
         include_trace: bool = False,
+        trace_id: str | None = None,
+        trace_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Retrieve using the user's question verbatim and answer with evidence."""
         language = _preferred_language(question)
+        trace_options: dict[str, Any] = {}
+        if trace_id is not None:
+            trace_options["trace_context"] = {"trace_id": trace_id}
+        metadata = {
+            "question_language": language,
+            "prompt_version": ANSWER_PROMPT_VERSION,
+            **(trace_metadata or {}),
+        }
         with observation(
             self.langfuse_client,
+            required=self.langfuse_required,
             as_type="span",
             name="rag.query",
             input={"question": question} if self.langfuse_capture_content else None,
-            metadata={
-                "question_language": language,
-                "prompt_version": ANSWER_PROMPT_VERSION,
-            },
+            metadata=metadata,
+            **trace_options,
         ) as trace:
             result = self._query_impl(
                 question,
@@ -357,6 +367,14 @@ class RAG:
                 include_trace=include_trace,
                 trace_client=self.langfuse_client,
             )
+            if include_trace:
+                active_trace_id = trace_id
+                if active_trace_id is None and self.langfuse_client is not None:
+                    try:
+                        active_trace_id = self.langfuse_client.get_current_trace_id()
+                    except Exception:
+                        active_trace_id = None
+                result["trace_id"] = active_trace_id
             trace_output: dict[str, Any] = {
                 "evidence_count": result["evidence_count"],
                 "sources": [
@@ -395,6 +413,7 @@ class RAG:
             language = _preferred_language(question)
             with observation(
                 trace_client,
+                required=self.langfuse_required,
                 as_type="retriever",
                 name="qdrant.hybrid_search",
                 input=(
@@ -484,6 +503,7 @@ class RAG:
             llm = self._load_llm()
             with observation(
                 trace_client,
+                required=self.langfuse_required,
                 as_type="generation",
                 name="answer-generation",
                 model=self.llm_config.model_name,

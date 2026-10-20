@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS base
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /uvx /bin/
 
@@ -27,15 +27,31 @@ COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser data/raw/ ./data/raw/
 COPY --chown=appuser:appuser data/processed/ ./data/processed/
 COPY --chown=appuser:appuser data/vector_store/qdrant/ ./data/vector_store/qdrant/
+COPY --chown=appuser:appuser data/evaluation/monitoring_questions.json ./data/evaluation/monitoring_questions.json
 
 RUN test -f data/raw/egyptian_civil_law.pdf \
     && test -f data/processed/articles.json \
-    && test -f data/vector_store/qdrant/manifest.json
+    && test -f data/vector_store/qdrant/manifest.json \
+    && test -f data/evaluation/monitoring_questions.json
 
 RUN uv sync --locked --no-dev --extra ollama \
     && uv cache clean
 
 USER appuser
-EXPOSE 8000
 
+# Keep RAGAS/Judge dependencies out of the serving image; this target is only
+# used by the scheduled monitoring service.
+FROM base AS monitor
+USER root
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y git \
+    && rm -rf /var/lib/apt/lists/* \
+    && uv sync --locked --no-dev --extra ollama --extra evaluation \
+    && uv cache clean
+USER appuser
+CMD ["arabic-legal-qa-monitor", "--interval-hours", "24"]
+
+# Preserve the slim runtime image as the default target for the API and MLflow.
+FROM base AS runtime
+EXPOSE 8000
 CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]

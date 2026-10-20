@@ -15,11 +15,13 @@ logger = logging.getLogger(__name__)
 def create_langfuse_client(settings: Settings) -> Any | None:
     """Initialize Langfuse when enabled and credentials are configured.
 
-    Observability is deliberately optional: missing keys, SDK errors, or an
-    unavailable Langfuse installation must not prevent the RAG API from serving.
+    Observability is optional by default. ``langfuse_required`` makes startup
+    fail closed if keys are missing, the SDK cannot initialize, or auth fails.
     """
 
     if not settings.langfuse_enabled:
+        if settings.langfuse_required:
+            raise RuntimeError("Langfuse tracing is required but disabled")
         return None
     secret_key = (
         settings.langfuse_secret_key.get_secret_value()
@@ -27,6 +29,10 @@ def create_langfuse_client(settings: Settings) -> Any | None:
         else ""
     )
     if not settings.langfuse_public_key or not secret_key:
+        if settings.langfuse_required:
+            raise RuntimeError(
+                "Langfuse tracing is required but public/secret API keys are missing"
+            )
         logger.warning(
             "Langfuse tracing is enabled but API keys are missing; tracing disabled",
             extra={"event": "langfuse.initialization.skipped"},
@@ -42,13 +48,27 @@ def create_langfuse_client(settings: Settings) -> Any | None:
             base_url=settings.langfuse_base_url,
             environment=settings.langfuse_environment,
         )
-    except Exception:
+    except Exception as exc:
+        if settings.langfuse_required:
+            raise RuntimeError("Langfuse client initialization failed") from exc
         logger.warning(
             "Langfuse initialization failed; continuing without tracing",
             exc_info=True,
             extra={"event": "langfuse.initialization.failed"},
         )
         return None
+
+    if settings.langfuse_required:
+        try:
+            authorized = client.auth_check()
+        except Exception as exc:
+            client.shutdown()
+            raise RuntimeError("Langfuse authentication check failed") from exc
+        if not authorized:
+            client.shutdown()
+            raise RuntimeError(
+                "Langfuse rejected the configured API keys; check the project keys"
+            )
 
     logger.info(
         "Langfuse tracing initialized",
@@ -63,17 +83,25 @@ def create_langfuse_client(settings: Settings) -> Any | None:
 
 
 @contextmanager
-def observation(client: Any | None, **kwargs: Any) -> Iterator[Any | None]:
-    """Create a best-effort nested observation without masking RAG errors."""
+def observation(
+    client: Any | None, *, required: bool = False, **kwargs: Any
+) -> Iterator[Any | None]:
+    """Create a nested observation, optionally failing if tracing is required."""
 
     if client is None:
+        if required:
+            raise RuntimeError(
+                "Langfuse observation required but client is unavailable"
+            )
         yield None
         return
 
     try:
         context = client.start_as_current_observation(**kwargs)
         span = context.__enter__()
-    except Exception:
+    except Exception as exc:
+        if required:
+            raise RuntimeError("Could not start required Langfuse observation") from exc
         logger.warning(
             "Could not start Langfuse observation; continuing without this span",
             exc_info=True,
@@ -98,6 +126,10 @@ def observation(client: Any | None, **kwargs: Any) -> Iterator[Any | None]:
         try:
             context.__exit__(None, None, None)
         except Exception:
+            if required:
+                raise RuntimeError(
+                    "Could not close required Langfuse observation"
+                ) from None
             logger.warning(
                 "Could not close Langfuse observation; RAG result is unaffected",
                 exc_info=True,

@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from api.schema import AskRequest, AskResponse, HealthResponse, is_article_citation
 from arabic_legal_qa.rag.orchestrator import RAG, create_rag
 from helpers.config import get_settings
 from helpers.langfuse import create_langfuse_client, shutdown_langfuse
 from helpers.logging_config import configure_logging
+from helpers.metrics import create_http_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,7 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
     """Create the API app with process-scoped startup and shutdown resources."""
 
     factory = rag_factory or create_rag
+    http_metrics = create_http_metrics()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -61,6 +64,7 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
         app.state.ready = False
         app.state.documents_indexed = 0
         app.state.startup_errors = []
+        app.state.http_metrics = http_metrics
         rag = None
         langfuse_client = None
         try:
@@ -71,6 +75,12 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
             if isinstance(rag, RAG):
                 rag.langfuse_client = langfuse_client
                 rag.langfuse_capture_content = settings.langfuse_capture_content
+                rag.langfuse_required = settings.langfuse_required
+            elif settings.langfuse_required:
+                raise RuntimeError(
+                    "Langfuse is required but the configured RAG factory does not "
+                    "support request tracing"
+                )
             app.state.rag = rag
             app.state.langfuse_client = langfuse_client
             app.state.documents_indexed = rag.initialize()
@@ -104,6 +114,29 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
         description="Grounded Q&A over the Egyptian Civil Code.",
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def record_http_metrics(request: Request, call_next):
+        started = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            route = request.scope.get("route")
+            route_name = getattr(route, "path", "unmatched")
+            http_metrics.observe(
+                request.method,
+                route_name,
+                status,
+                time.perf_counter() - started,
+            )
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics() -> Response:
+        body, content_type = http_metrics.render()
+        return Response(content=body, media_type=content_type)
 
     @app.post("/ask", response_model=AskResponse)
     def ask(payload: AskRequest, rag: RAG = Depends(get_rag)) -> AskResponse:

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Arabic Legal RAG
+    orgId: 1
+    folder: RAG Monitoring
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

@@ -70,8 +70,12 @@ DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_MLFLOW_CONFIG_MODEL = "arabic-legal-rag-config"
 DEFAULT_MLFLOW_CONFIG_ALIAS = "champion"
 DEFAULT_MLFLOW_EVALUATION = "rag-config-experiments"
+DEFAULT_RAGAS_MONITOR_EXPERIMENT = "rag-50-question-monitoring"
 DEFAULT_MLFLOW_TRACKING_URI = "http://localhost:5000"
 DEFAULT_MLFLOW_MIN_FAITHFULNESS = 0.75
+DEFAULT_RAGAS_FAITHFULNESS_THRESHOLD = 0.80
+DEFAULT_RAGAS_DRIFT_THRESHOLD = 0.10
+DEFAULT_RAGAS_MONITOR_INTERVAL_HOURS = 24.0
 DEFAULT_LANGFUSE_BASE_URL = "http://localhost:3000"
 DEFAULT_LANGFUSE_ENVIRONMENT = "development"
 
@@ -306,6 +310,17 @@ class Settings(BaseSettings):
     mlflow_config_required: bool = False
     mlflow_experiment_name: str = DEFAULT_MLFLOW_EVALUATION
     mlflow_min_faithfulness: float = DEFAULT_MLFLOW_MIN_FAITHFULNESS
+    ragas_monitor_experiment_name: str = DEFAULT_RAGAS_MONITOR_EXPERIMENT
+    ragas_faithfulness_threshold: float = Field(
+        default=DEFAULT_RAGAS_FAITHFULNESS_THRESHOLD, ge=0.0, le=1.0
+    )
+    ragas_drift_threshold: float = Field(
+        default=DEFAULT_RAGAS_DRIFT_THRESHOLD, ge=0.0, le=1.0
+    )
+    ragas_monitor_interval_hours: float = Field(
+        default=DEFAULT_RAGAS_MONITOR_INTERVAL_HOURS, gt=0.0
+    )
+    prometheus_pushgateway_url: str | None = None
 
     # Langfuse tracing is opt-in; request content is not captured by default.
     langfuse_enabled: bool = False
@@ -319,6 +334,7 @@ class Settings(BaseSettings):
         ),
     )
     langfuse_capture_content: bool = False
+    langfuse_required: bool = False
 
     def embedding_config(self) -> EmbeddingConfig:
         return EmbeddingConfig(

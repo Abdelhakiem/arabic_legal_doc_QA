@@ -4,6 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from helpers.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def disable_external_observability_for_api_tests(monkeypatch) -> None:
+    """Keep API unit tests independent of the developer's local .env/services."""
+    monkeypatch.setattr("api.app.get_settings", lambda: Settings(_env_file=None))
 
 
 class FakeRAG:
@@ -53,6 +60,19 @@ def test_ask_returns_answer_and_unique_article_citations() -> None:
     assert rag.asked == ["ما آثار العقد؟"]
     assert rag.initialize_calls == 1
     assert rag.closed
+
+
+def test_metrics_endpoint_exposes_bounded_http_request_metrics() -> None:
+    rag = FakeRAG()
+    app = create_app(rag_factory=lambda: rag)
+
+    with TestClient(app) as client:
+        client.post("/ask", json={"question": "ما آثار العقد؟"})
+        response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "http_requests_total" in response.text
+    assert 'method="POST",route="/ask",status="200"' in response.text
 
 
 def test_health_reports_ready_index_count_without_extra_errors() -> None:

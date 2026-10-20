@@ -1,6 +1,18 @@
 # Optional local Langfuse stack. Combine with compose.yaml using
 # `--profile langfuse`; credentials are required from the private .env file.
 services:
+  # Enabling this overlay also turns on fail-closed Langfuse startup for the
+  # API: the service does not report healthy when trace credentials are absent
+  # or rejected. The base Compose file remains usable without Langfuse.
+  app:
+    environment:
+      LANGFUSE_ENABLED: "true"
+      LANGFUSE_REQUIRED: "true"
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+    depends_on:
+      langfuse-web:
+        condition: service_healthy
+
   langfuse-worker:
     image: docker.langfuse.com/langfuse/langfuse-worker:4
     restart: unless-stopped
