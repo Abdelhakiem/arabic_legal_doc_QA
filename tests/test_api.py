@@ -75,7 +75,7 @@ def test_root_serves_web_interface_and_static_assets() -> None:
     assert "text/html" in page.headers["content-type"]
     assert 'id="question-form"' in page.text
     assert script.status_code == 200
-    assert "fetch(\"/ask\"" in script.text
+    assert 'fetch("/ask"' in script.text
     assert styles.status_code == 200
     assert ".question-card" in styles.text
     assert rag.closed
