@@ -62,6 +62,25 @@ def test_ask_returns_answer_and_unique_article_citations() -> None:
     assert rag.closed
 
 
+def test_root_serves_web_interface_and_static_assets() -> None:
+    rag = FakeRAG()
+    app = create_app(rag_factory=lambda: rag)
+
+    with TestClient(app) as client:
+        page = client.get("/")
+        script = client.get("/static/app.js")
+        styles = client.get("/static/styles.css")
+
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    assert 'id="question-form"' in page.text
+    assert script.status_code == 200
+    assert "fetch(\"/ask\"" in script.text
+    assert styles.status_code == 200
+    assert ".question-card" in styles.text
+    assert rag.closed
+
+
 def test_metrics_endpoint_exposes_bounded_http_request_metrics() -> None:
     rag = FakeRAG()
     app = create_app(rag_factory=lambda: rag)

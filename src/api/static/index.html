@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Ask questions about the Egyptian Civil Code and receive grounded answers with article citations."
+    />
+    <meta name="theme-color" content="#f4f2eb" />
+    <title>Arabic Legal QA — Egyptian Civil Code</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Mizan home">
+          <span class="brand-mark" aria-hidden="true">م</span>
+          <span class="brand-copy">
+            <span class="brand-name">MIZAN</span>
+            <span class="brand-caption" data-i18n="brandCaption">LEGAL Q&amp;A</span>
+          </span>
+        </a>
+        <div class="topbar-tools">
+          <div class="service-status" id="service-status" role="status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="service-status-text" data-i18n="checking">Checking service</span>
+          </div>
+          <div class="language-switch" aria-label="Interface language">
+            <button class="language-button is-active" type="button" data-language="en" aria-pressed="true">EN</button>
+            <button class="language-button" type="button" data-language="ar" aria-pressed="false">عربي</button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero" aria-labelledby="page-title">
+          <div class="eyebrow"><span class="eyebrow-line"></span><span data-i18n="eyebrow">EGYPTIAN CIVIL CODE</span></div>
+          <h1 id="page-title" data-i18n="title">Clarity on the law,<br />grounded in the source.</h1>
+          <p class="hero-description" data-i18n="intro">
+            Ask in Arabic or English. Get a clear answer supported by relevant articles from the Egyptian Civil Code.
+          </p>
+        </section>
+
+        <section class="workspace" aria-label="Legal question and answer">
+          <form class="question-card" id="question-form">
+            <label class="field-label" for="question" data-i18n="questionLabel">YOUR QUESTION</label>
+            <textarea
+              id="question"
+              name="question"
+              rows="4"
+              required
+              maxlength="4000"
+              dir="auto"
+              autocomplete="off"
+              placeholder="For example: What happens if a contract is changed without agreement?"
+              data-i18n-placeholder="questionPlaceholder"
+            ></textarea>
+            <div class="form-footer">
+              <p class="input-hint" data-i18n="inputHint">Use either language; your answer will follow your question.</p>
+              <button class="ask-button" id="ask-button" type="submit">
+                <span data-i18n="askButton">Ask a question</span>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M10 5l5 5-5 5" /></svg>
+              </button>
+            </div>
+            <p class="form-error" id="form-error" role="alert" hidden></p>
+          </form>
+
+          <section class="answer-card" id="answer-card" aria-labelledby="answer-heading" aria-live="polite" hidden>
+            <div class="answer-heading-row">
+              <div>
+                <p class="field-label" data-i18n="answerLabel">GROUNDED RESPONSE</p>
+                <h2 id="answer-heading" data-i18n="answerHeading">Your answer</h2>
+              </div>
+              <span class="answer-symbol" aria-hidden="true">§</span>
+            </div>
+            <p class="answer-text" id="answer-text" dir="auto"></p>
+            <div class="sources-block" id="sources-block" hidden>
+              <h3 data-i18n="sourcesHeading">Relevant articles</h3>
+              <ul class="source-list" id="source-list"></ul>
+            </div>
+            <p class="no-sources" id="no-sources" data-i18n="noSources" hidden>
+              No article citations were returned for this answer.
+            </p>
+            <p class="disclaimer" data-i18n="disclaimer">
+              Informational assistance only; this is not a substitute for advice from a qualified lawyer.
+            </p>
+          </section>
+        </section>
+      </main>
+
+      <footer class="page-footer">
+        <span data-i18n="footer">Built for exploring the Egyptian Civil Code.</span>
+        <a href="/docs" data-i18n="apiDocs">API documentation</a>
+      </footer>
+    </div>
+  </body>
+</html>

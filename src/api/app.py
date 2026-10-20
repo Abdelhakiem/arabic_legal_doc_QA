@@ -6,10 +6,12 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from api.schema import AskRequest, AskResponse, HealthResponse, is_article_citation
 from arabic_legal_qa.rag.orchestrator import RAG, create_rag
@@ -114,6 +116,14 @@ def create_app(rag_factory: Callable[[], RAG] | None = None) -> FastAPI:
         description="Grounded Q&A over the Egyptian Civil Code.",
         lifespan=lifespan,
     )
+    static_dir = Path(__file__).resolve().parent / "static"
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def web_interface() -> FileResponse:
+        """Serve the small same-origin browser UI for the Q&A endpoint."""
+
+        return FileResponse(static_dir / "index.html")
 
     @app.middleware("http")
     async def record_http_metrics(request: Request, call_next):
